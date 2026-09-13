@@ -1,224 +1,633 @@
-"""
-CCIRS Proxy Server
-==================
-Extends the existing ccil_proxy.py pattern (from the INR IRS Pricer) to serve
-all three curves the CCIRS pricer needs, from a single Render/Railway deploy:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCIRS · USD/INR Cross Currency Swap Pricer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,400&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0d0f14; --bg1:#12151c; --bg2:#181c26; --bg3:#1e2330; --bg4:#242938;
+  --border:#2a2f42; --border2:#343a52;
+  --text:#e2e6f0; --text2:#9aa0b8; --text3:#5c637a;
+  --amber:#f5a623; --amber2:#ffc85a;
+  --blue:#4c9fff; --blue2:#7ab8ff;
+  --green:#3dd68c; --red:#ff5f5f; --purple:#a78bfa;
+  --mono:'DM Mono',monospace; --sans:'DM Sans',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;min-height:100vh;-webkit-font-smoothing:antialiased;}
+ 
+.header{background:var(--bg1);border-bottom:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:100;}
+.logo-mark{width:36px;height:36px;background:linear-gradient(135deg,var(--amber) 0%,#e8890a 100%);border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:500;font-size:11px;color:#0d0f14;letter-spacing:.5px;flex-shrink:0;}
+.header-text{flex:1;}
+.header-title{font-size:15px;font-weight:600;letter-spacing:.3px;}
+.header-sub{font-size:11px;color:var(--text2);font-family:var(--mono);letter-spacing:.5px;}
+.status-badge{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:20px;font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.5px;border:1px solid;flex-shrink:0;}
+.status-badge.live{color:var(--green);border-color:rgba(61,214,140,.3);background:rgba(61,214,140,.08);}
+.status-badge.warn{color:var(--amber);border-color:rgba(245,166,35,.3);background:rgba(245,166,35,.08);}
+.status-badge.bad{color:var(--red);border-color:rgba(255,95,95,.3);background:rgba(255,95,95,.08);}
+.status-badge.fetching{color:var(--blue2);border-color:rgba(76,159,255,.3);background:rgba(76,159,255,.08);}
+.pulse{width:6px;height:6px;border-radius:50%;animation:pulse 2s infinite;}
+.live .pulse{background:var(--green);} .warn .pulse{background:var(--amber);} .bad .pulse{background:var(--red);animation:none;}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+ 
+.main{max-width:900px;margin:0 auto;padding:16px;}
+ 
+.form-section{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;}
+.section-label{font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media(max-width:500px){.form-grid{grid-template-columns:1fr;}}
+.field{display:flex;flex-direction:column;gap:5px;}
+.field label{font-size:11px;color:var(--text2);font-family:var(--mono);letter-spacing:.3px;}
+.field input,.field select{background:var(--bg2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:5px;font-family:var(--mono);font-size:13px;outline:none;transition:border-color .2s;width:100%;appearance:none;}
+.field input:focus,.field select:focus{border-color:var(--amber);}
+.field select{cursor:pointer;}
+ 
+/* ── CURVE STATUS — front and centre, this is the whole point ── */
+.curve-status-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid rgba(42,47,66,.5);gap:10px;}
+.curve-status-row:last-child{border-bottom:none;}
+.cs-name{font-family:var(--mono);font-size:12.5px;color:var(--text);font-weight:500;min-width:90px;}
+.cs-tag{font-family:var(--mono);font-size:10px;font-weight:500;padding:2px 8px;border-radius:10px;letter-spacing:.3px;flex-shrink:0;}
+.cs-tag.live{color:var(--green);background:rgba(61,214,140,.1);}
+.cs-tag.upload{color:var(--blue2);background:rgba(76,159,255,.1);}
+.cs-tag.fallback{color:var(--amber);background:rgba(245,166,35,.1);}
+.cs-tag.stale{color:var(--red);background:rgba(255,95,95,.1);}
+.cs-detail{font-family:var(--mono);font-size:11px;color:var(--text2);text-align:right;flex:1;}
+.cs-detail .stale-warn{color:var(--red);font-weight:600;}
+.staleness-banner{background:rgba(255,95,95,.1);border:1px solid rgba(255,95,95,.3);color:var(--red);
+  padding:9px 12px;border-radius:6px;font-size:12px;font-family:var(--mono);margin-top:10px;display:none;line-height:1.6;}
+.staleness-banner.show{display:block;}
+ 
+.price-btn{width:100%;padding:14px;background:linear-gradient(135deg,var(--amber) 0%,#e8890a 100%);color:#0d0f14;border:none;border-radius:6px;font-family:var(--sans);font-size:14px;font-weight:700;letter-spacing:.5px;cursor:pointer;transition:opacity .2s,transform .1s;display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:16px;}
+.price-btn:hover{opacity:.9;} .price-btn:active{transform:scale(.99);}
+ 
+.error-box{background:rgba(255,95,95,.1);border:1px solid rgba(255,95,95,.3);color:var(--red);padding:10px 12px;border-radius:6px;font-size:13px;margin-bottom:16px;display:none;}
+.error-box.show{display:block;}
+ 
+.result-hero{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:20px;margin-bottom:16px;display:none;}
+.result-hero.show{display:block;}
+.result-label{font-size:10px;font-family:var(--mono);color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;}
+.spread-bps{font-family:var(--mono);font-size:clamp(36px,10vw,56px);font-weight:500;color:var(--amber);line-height:1;margin-bottom:6px;}
+.spread-bps span{font-size:.4em;color:var(--text2);margin-left:4px;}
+.spread-decomp{font-family:var(--mono);font-size:13px;color:var(--text2);line-height:1.8;}
+.spread-decomp .hi{color:var(--text);}
+ 
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
+@media(max-width:420px){.metrics{grid-template-columns:repeat(2,1fr);}}
+.metric-card{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px;}
+.metric-name{font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px;}
+.metric-val{font-family:var(--mono);font-size:14px;font-weight:500;color:var(--text);}
+ 
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:16px;display:none;}
+.card.show{display:block;}
+.card-title{font-size:11px;font-family:var(--mono);color:var(--text2);letter-spacing:.8px;text-transform:uppercase;margin-bottom:12px;}
+ 
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;}
+thead th{text-align:left;color:var(--text3);font-size:10px;letter-spacing:.5px;padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap;}
+tbody td{padding:6px 8px;color:var(--text2);border-bottom:1px solid rgba(42,47,66,.5);white-space:nowrap;text-align:right;}
+tbody td:first-child{text-align:left;}
+.cf-scroll{max-height:380px;overflow-y:auto;}
+ 
+.toggle-link{background:none;border:none;color:var(--blue2);font-family:var(--mono);font-size:11px;cursor:pointer;text-decoration:underline;letter-spacing:.3px;}
+#rawCurveArea{display:none;margin-top:10px;}
+</style>
+</head>
+<body>
+ 
+<div class="header">
+  <div class="logo-mark">CCS</div>
+  <div class="header-text">
+    <div class="header-title">USD/INR CCIRS Pricer</div>
+    <div class="header-sub">SOFR + Spread ↔ INR Float/Fixed · MOD MIFOR Discounting</div>
+  </div>
+  <div class="status-badge fetching" id="statusBadge"><div class="pulse"></div><span id="statusText">LOADING</span></div>
+</div>
+ 
+<div class="main">
+ 
+<div class="error-box" id="errorBox"></div>
+ 
+<div class="form-section">
+  <div class="section-label">Curve Status</div>
+  <div id="curveStatusRows"></div>
+  <div class="staleness-banner" id="staleBanner"></div>
+</div>
+ 
+<div class="form-section">
+  <div class="section-label">Trade Inputs</div>
+  <div class="form-grid">
+    <div class="field"><label>NOTIONAL (INR)</label><input type="text" id="notional" value="5,00,00,00,000" onblur="reformatNotional()"></div>
+    <div class="field"><label>START DATE</label><input type="date" id="startDate"></div>
+    <div class="field"><label>MATURITY DATE</label><input type="date" id="maturityDate"></div>
+    <div class="field"><label>USDINR SPOT</label><input type="number" id="spot" value="95.27" step="0.01"></div>
+    <div class="field"><label>SWAP TYPE</label>
+      <select id="swapType">
+        <option value="floatfloat" selected>Float/Float (INR)</option>
+        <option value="floatfixed">Float/Fixed (INR Fixed)</option>
+      </select></div>
+    <div class="field"><label>PRINCIPAL AMORTISATION</label>
+      <select id="amortType"><option>Bullet</option><option>Monthly</option><option>Quarterly</option><option>Semi-Annual</option></select></div>
+    <div class="field"><label>INTEREST PAYMENT FREQUENCY</label>
+      <select id="intFreq"><option>Monthly</option><option>Quarterly</option><option selected>Semi-Annual</option></select></div>
+    <div class="field"><label>USD LEG SPREAD (bps)</label><input type="number" id="usdSpread" value="100" step="1"></div>
+    <div class="field"><label>MORATORIUM (MONTHS)</label><input type="number" id="moratorium" value="0" step="1"></div>
+  </div>
+</div>
+ 
+<button class="price-btn" onclick="runPricer()">SOLVE</button>
+ 
+<div class="result-hero" id="resultHero">
+  <div class="result-label" id="heroLabel">Breakeven INR Spread</div>
+  <div class="spread-bps" id="spreadBig">—<span>bps</span></div>
+  <div class="spread-decomp" id="spreadDecomp"></div>
+</div>
+ 
+<div class="metrics" id="metricsRow" style="display:none;">
+  <div class="metric-card"><div class="metric-name">Equivalent Rate</div><div class="metric-val" id="mRate">—</div></div>
+  <div class="metric-card"><div class="metric-name">PV01 (₹ Lakhs)</div><div class="metric-val" id="mPv01">—</div></div>
+  <div class="metric-card"><div class="metric-name">USD Notional Equiv.</div><div class="metric-val" id="mUsdNotl">—</div></div>
+  <div class="metric-card"><div class="metric-name">PV USD Leg (INR)</div><div class="metric-val" id="mPvUsd">—</div></div>
+  <div class="metric-card"><div class="metric-name">INR PV01 (₹/bp)</div><div class="metric-val" id="mPv01Raw">—</div></div>
+  <div class="metric-card"><div class="metric-name">NPV Check</div><div class="metric-val" id="mNpv">—</div></div>
+</div>
+ 
+<div class="card" id="cfCard">
+  <div class="card-title">Cashflow Schedule</div>
+  <div class="table-wrap cf-scroll" id="cfWrap"></div>
+</div>
+ 
+<button class="toggle-link" id="rawToggleBtn" onclick="toggleRawCurves()">View raw curve data ▾</button>
+<div id="rawCurveArea"></div>
+ 
+</div>
+ 
+<script>
+/* =========================================================================
+   FALLBACK CURVES — verbatim from Curve_Backend, CCIRS_pricer_11-09-2026.xlsx
+   Used only if a live/upload fetch fails outright.
+   ========================================================================= */
+const FALLBACK = {
+  sofr: [["1 WK",3.757],["2 WK",3.786],["3 WK",3.8055],["1 MO",3.81475],["2 MO",3.85774],
+    ["3 MO",3.898],["4 MO",3.964],["5 MO",4.016],["6 MO",4.05315],["7 MO",4.1045],
+    ["8 MO",4.15285],["9 MO",4.19375],["10 MO",4.2356],["11 MO",4.2755],["12 MO",4.30908],
+    ["18 MO",4.3899],["2 YR",4.44316],["3 YR",4.46391],["4 YR",4.46641],["5 YR",4.47231],
+    ["6 YR",4.48321],["7 YR",4.49715],["8 YR",4.51404],["9 YR",4.53387],["10 YR",4.55605],
+    ["12 YR",4.60427],["15 YR",4.66985],["20 YR",4.7212],["25 YR",4.70396],["30 YR",4.65377],
+    ["40 YR",4.52785],["50 YR",4.39138]],
+  inr_irs: [["1 MO",5.27],["2 MO",5.37],["3 MO",5.475],["6 MO",5.69],["9 MO",5.89],
+    ["1 YR",6.081],["2 YR",6.3],["3 YR",6.42],["4 YR",6.525],["5 YR",6.61],
+    ["7 YR",6.71],["10 YR",6.81]],
+  mod_mifor: [["1 MO",7.1325],["2 MO",7.35135],["3 MO",7.4586],["6 MO",7.6927],
+    ["12 MO",7.90835],["2 YR",7.565],["3 YR",7.585],["4 YR",7.625],["5 YR",7.665],
+    ["7 YR",7.795],["10 YR",7.885]]
+};
+ 
+const CURVE_META = {
+  sofr:     {label:'SOFR IRS', tau:365/360, step:1,   tenorBasis:360, source:'github', file:'sofr_curve.csv'},
+  inr_irs:  {label:'INR IRS',  tau:0.5,     step:0.5, tenorBasis:365, source:'ccil'},
+  mod_mifor:{label:'MOD MIFOR',tau:0.5,     step:0.5, tenorBasis:365, source:'github', file:'mod_mifor_curve.csv'}
+};
+ 
+let curveState = { sofr: FALLBACK.sofr.slice(), inr_irs: FALLBACK.inr_irs.slice(), mod_mifor: FALLBACK.mod_mifor.slice() };
+let curveStatus = { sofr:'fallback', inr_irs:'fallback', mod_mifor:'fallback' };
+let curveDetail = { sofr:'', inr_irs:'', mod_mifor:'' };
+ 
+// ---- SET THESE ONCE, then push to GitHub — every visitor's copy auto-fills.
+const DEFAULT_PROXY_URL = 'https://ccirs-pricer.onrender.com';
+const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/basith416/CCIRS-PRICER/main';
+const GITHUB_OWNER = 'basith416';
+const GITHUB_REPO = 'CCIRS-PRICER';
+const GITHUB_BRANCH = 'main';
+ 
+/* ---------------------------- tenor / date utils ---------------------------- */
+function parseTenorYears(label, basis){
+  const m = label.trim().toUpperCase().match(/^(\d+(?:\.\d+)?)\s*(WK|MO|YR|M|Y)$/);
+  if(!m) return null;
+  const n = parseFloat(m[1]);
+  const unit = m[2];
+  if(unit==='WK') return n*7/basis;
+  if(unit==='MO'||unit==='M') return n/12;
+  return n;
+}
+function toRaw(pairs, basis){
+  return pairs.map(([term,rate])=>({term, rate:parseFloat(rate), T: parseTenorYears(term, basis)}))
+              .filter(n=>n.T!==null && !isNaN(n.rate)).sort((a,b)=>a.T-b.T);
+}
+function edate(date, months){
+  const targetMonth = date.getUTCMonth()+months;
+  const targetYear = date.getUTCFullYear() + Math.floor(targetMonth/12);
+  const m = ((targetMonth%12)+12)%12;
+  const lastDay = new Date(Date.UTC(targetYear, m+1, 0)).getUTCDate();
+  const day = Math.min(date.getUTCDate(), lastDay);
+  return new Date(Date.UTC(targetYear, m, day));
+}
+function daysBetween(a,b){ return Math.round((b-a)/86400000); }
+function yearsBetween365(a,b){ return daysBetween(a,b)/365; }
+ 
+/* ---------------------------- interpolation on raw quotes ---------------------------- */
+function interpRawRate(raw, t){
+  if(t <= raw[0].T) return raw[0].rate;
+  for(let i=0;i<raw.length-1;i++){
+    if(t>=raw[i].T && t<=raw[i+1].T){
+      const w = (t-raw[i].T)/(raw[i+1].T-raw[i].T);
+      return raw[i].rate + w*(raw[i+1].rate-raw[i].rate);
+    }
+  }
+  return raw[raw.length-1].rate;
+}
+ 
+/* ---------------------------- bootstrap ---------------------------- */
+function bootstrap(raw, tau, step){
+  const nodes = [];
+  raw.filter(n=>n.T<=1+1e-9).forEach(n=>{
+    nodes.push({T:n.T, DF: 1/(1+(n.rate/100)*n.T)});
+  });
+  const maxT = raw[raw.length-1].T;
+  let t = 1 + step;
+  while(t <= maxT + 1e-9){
+    const rate = interpRawRate(raw, t);
+    let cumsum = 0;
+    for(let cd = step; cd < t-1e-9; cd += step){
+      const node = nodes.find(n=>Math.abs(n.T-cd)<1e-6);
+      if(node) cumsum += node.DF;
+    }
+    const DF = (1 - (rate/100)*tau*cumsum) / (1 + (rate/100)*tau);
+    nodes.push({T:t, DF});
+    t += step;
+  }
+  nodes.sort((a,b)=>a.T-b.T);
+  nodes.forEach(n=> n.Z = n.T>0 ? -Math.log(n.DF)/n.T*100 : 0);
+  return nodes;
+}
+ 
+/* ---------------------------- curve DF lookup ---------------------------- */
+function curveDF(nodes, t){
+  if(t<=0) return 1;
+  let idx = 0;
+  for(let i=0;i<nodes.length;i++){ if(nodes[i].T<=t) idx=i; }
+  if(idx === nodes.length-1){
+    const a = nodes[idx-1], b = nodes[idx];
+    const zt0 = a.Z/100*a.T, zt1 = b.Z/100*b.T;
+    const slope = (zt1-zt0)/(b.T-a.T);
+    return Math.exp(-(zt1 + slope*(t-b.T)));
+  }
+  const a = nodes[idx], b = nodes[idx+1];
+  const zt0 = a.Z/100*a.T, zt1 = b.Z/100*b.T;
+  const w = (t-a.T)/(b.T-a.T);
+  return Math.exp(-(zt0 + w*(zt1-zt0)));
+}
+ 
+/* =========================================================================
+   CASHFLOW ENGINE
+   ========================================================================= */
+function runEngine(inputs){
+  const { notional, start, maturity, spot, swapType, amortType, intFreqMonths,
+          princFreqMonths, usdSpreadBps, moratoriumMonths, sofrNodes, inrNodes, miforNodes } = inputs;
+ 
+  const isFixed = swapType==='floatfixed';
+  const isBullet = amortType==='Bullet';
+ 
+  const periods = [];
+  let cursor = new Date(start.getTime());
+  let pnum = 0;
+  while(cursor < maturity){
+    pnum++;
+    const pStart = new Date(cursor.getTime());
+    let pEnd = edate(pStart, intFreqMonths);
+    if(pEnd > maturity) pEnd = new Date(maturity.getTime());
+    const monthsSinceStart = (pEnd.getFullYear()-start.getFullYear())*12 + (pEnd.getMonth()-start.getMonth());
+    let isPrincipalDate;
+    if(isBullet){
+      isPrincipalDate = (pEnd.getTime()===maturity.getTime());
+    } else {
+      const adj = monthsSinceStart - moratoriumMonths;
+      isPrincipalDate = ((adj>0 && adj % princFreqMonths===0) || pEnd.getTime()===maturity.getTime());
+    }
+    periods.push({pStart, pEnd, isPrincipalDate});
+    cursor = pEnd;
+    if(pnum>240) break;
+  }
+  const totalPrincipalDates = periods.filter(p=>p.isPrincipalDate).length || 1;
+ 
+  let inrOutstanding = notional;
+  let pvUsdLegUSD = 0, pvInrLegBase = 0, annuity = 0;
+  const rows = [];
+  periods.forEach(p=>{
+    const D = daysBetween(p.pStart, p.pEnd);
+    const E = D/365, F = D/360;
+    const t1 = yearsBetween365(start, p.pStart);
+    const t2 = yearsBetween365(start, p.pEnd);
+ 
+    const dfSofr1 = curveDF(sofrNodes, t1), dfSofr2 = curveDF(sofrNodes, t2);
+    const fwdSofr = (t2-t1)>1e-9 ? (dfSofr1/dfSofr2 - 1)/(t2-t1) : 0;
+ 
+    let fwdInr = 0;
+    if(!isFixed){
+      const dfInr1 = curveDF(inrNodes, t1), dfInr2 = curveDF(inrNodes, t2);
+      fwdInr = (t2-t1)>1e-9 ? (dfInr1/dfInr2 - 1)/(t2-t1) : 0;
+    }
+    const dfMifor2 = curveDF(miforNodes, t2);
+ 
+    const vThis = inrOutstanding;
+    const W = p.isPrincipalDate ? (isBullet ? vThis : notional/totalPrincipalDates) : 0;
+    const usdNotional = vThis/spot;
+    const usdPrincipal = W/spot;
+ 
+    const usdAllIn = fwdSofr + usdSpreadBps/10000;
+    const usdInterest = usdNotional*usdAllIn*F;
+    const usdCF = usdInterest + usdPrincipal;
+    const usdPV = usdCF*dfSofr2;
+ 
+    const inrInterestBase = vThis*fwdInr*E;
+    const inrCFBase = inrInterestBase + W;
+    const inrPVBase = inrCFBase*dfMifor2;
+    const inrAnnuity = vThis*E*dfMifor2;
+ 
+    pvUsdLegUSD += usdPV;
+    pvInrLegBase += inrPVBase;
+    annuity += inrAnnuity;
+ 
+    rows.push({...p, D,E,F,t1,t2, fwdSofr, fwdInr, dfSofr2, dfMifor2, vThis, W, usdNotional,
+               usdPrincipal, usdInterest, usdCF, usdPV, inrInterestBase, inrCFBase, inrPVBase, inrAnnuity});
+ 
+    inrOutstanding = inrOutstanding - W;
+  });
+ 
+  const pvUsdLegINR = pvUsdLegUSD*spot;
+  const breakevenDecimal = (pvUsdLegINR - pvInrLegBase)/annuity;
+  const breakevenBps = breakevenDecimal*10000;
+ 
+  let pvInrLegFull = 0;
+  rows.forEach(r=>{
+    const spreadContrib = r.vThis*breakevenDecimal*r.E;
+    const inrInterestFull = r.inrInterestBase + spreadContrib;
+    const inrCFFull = inrInterestFull + r.W;
+    const inrPVFull = r.inrPVBase + spreadContrib*r.dfMifor2;
+    r.inrInterestFull = inrInterestFull; r.inrCFFull = inrCFFull; r.inrPVFull = inrPVFull;
+    pvInrLegFull += inrPVFull;
+  });
+ 
+  return {
+    rows, pvUsdLegUSD, pvUsdLegINR, pvInrLegBase, annuity,
+    breakevenDecimal, breakevenBps, pvInrLegFull,
+    npvCheck: pvInrLegFull - pvUsdLegINR,
+    totalPrincipalDates
+  };
+}
+ 
+/* =========================================================================
+   AUTO CURVE FETCH — no manual mode selection. On page load, INR IRS pulls
+   live from CCIL via the Render proxy; SOFR and MOD MIFOR pull whatever CSV
+   you last committed to the GitHub repo, plus that commit's real timestamp.
+   ========================================================================= */
+function mergeCurveRows(key, parsedRows){
+  const basis = CURVE_META[key].tenorBasis;
+  let updated = 0;
+  curveState[key] = curveState[key].map(([term,rate])=>{
+    const T = parseTenorYears(term, basis);
+    const match = parsedRows.find(r=>Math.abs(r.T-T)<0.01);
+    if(match){ updated++; return [term, match.rate]; }
+    return [term, rate];
+  });
+  parsedRows.forEach(r=>{
+    const exists = curveState[key].some(([t])=>Math.abs(parseTenorYears(t,basis)-r.T)<0.01);
+    if(!exists){ curveState[key].push([r.term, r.rate]); updated++; }
+  });
+  return updated;
+}
+function parseCsvRows(text, basis){
+  const lines = text.trim().split(/\r?\n/).filter(l=>l.trim()!=='');
+  const rows = lines.map(l=>l.split(/,|\t|;/).map(s=>s.trim()));
+  const dataRows = (rows.length && isNaN(parseFloat(rows[0][1]))) ? rows.slice(1) : rows;
+  return dataRows
+    .map(r=>({term:r[0], rate:parseFloat(r[1]), T:parseTenorYears(r[0], basis)}))
+    .filter(r=>r.T!==null && !isNaN(r.rate));
+}
+function fmtDateTime(iso){
+  const d = new Date(iso);
+  return d.toLocaleString('en-IN', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:true, timeZone:'Asia/Kolkata'}) + ' IST';
+}
+function isSameCalendarDay(iso){
+  const d = new Date(iso);
+  const now = new Date();
+  const dIst = new Date(d.toLocaleString('en-US', {timeZone:'Asia/Kolkata'}));
+  const nowIst = new Date(now.toLocaleString('en-US', {timeZone:'Asia/Kolkata'}));
+  return dIst.toDateString() === nowIst.toDateString();
+}
+async function getLastCommitInfo(filename){
+  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/commits?path=${filename}&sha=${GITHUB_BRANCH}&per_page=1`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('GitHub API HTTP '+res.status);
+  const data = await res.json();
+  if(!data.length) throw new Error('no commit history found for '+filename);
+  return data[0].commit.committer.date; // ISO timestamp
+}
+ 
+async function fetchCurve(key){
+  const meta = CURVE_META[key];
+  try{
+    if(meta.source === 'github'){
+      const url = `${GITHUB_RAW_BASE}/${meta.file}?cb=${Date.now()}`;
+      const [res, commitDate] = await Promise.all([ fetch(url), getLastCommitInfo(meta.file).catch(()=>null) ]);
+      if(!res.ok) throw new Error(`could not fetch ${meta.file} (HTTP ${res.status})`);
+      const text = await res.text();
+      const parsed = parseCsvRows(text, meta.tenorBasis);
+      if(parsed.length===0) throw new Error(`${meta.file} had no readable rows`);
+      mergeCurveRows(key, parsed);
+      if(commitDate){
+        const fresh = isSameCalendarDay(commitDate);
+        curveStatus[key] = fresh ? 'upload' : 'stale';
+        curveDetail[key] = `Uploaded: ${fmtDateTime(commitDate)}` + (fresh ? '' : '  — NOT TODAY');
+      } else {
+        curveStatus[key] = 'upload';
+        curveDetail[key] = 'Uploaded (commit time unavailable)';
+      }
+    } else { // 'ccil'
+      const res = await fetch(DEFAULT_PROXY_URL.replace(/\/$/,'') + '/inr_irs');
+      const data = await res.json();
+      if(!data.ok) throw new Error(data.error||'fetch failed');
+      const parsed = data.rates.map(r=>({T: parseTenorYears(r.tenor, meta.tenorBasis), rate: r.rate, term: r.tenor})).filter(r=>r.T!==null);
+      mergeCurveRows(key, parsed);
+      curveStatus[key] = 'live';
+      curveDetail[key] = 'Live from CCIL just now';
+    }
+  }catch(e){
+    curveStatus[key] = 'fallback';
+    curveDetail[key] = `Could not fetch (${e.message}) — using 11-Sep-2026 fallback`;
+  }
+  renderCurveStatus();
+}
+ 
+function renderCurveStatus(){
+  const wrap = document.getElementById('curveStatusRows');
+  wrap.innerHTML = Object.keys(CURVE_META).map(key=>{
+    const meta = CURVE_META[key], st = curveStatus[key], detail = curveDetail[key];
+    const tagClass = st==='stale' ? 'stale' : st;
+    const tagText = {live:'LIVE', upload:'UPLOADED', fallback:'FALLBACK', stale:'STALE'}[st];
+    return `<div class="curve-status-row">
+      <span class="cs-name">${meta.label}</span>
+      <span class="cs-tag ${tagClass}">${tagText}</span>
+      <span class="cs-detail">${st==='stale' ? '<span class="stale-warn">'+detail+'</span>' : detail}</span>
+    </div>`;
+  }).join('');
+ 
+  const anyStale = Object.values(curveStatus).some(s=>s==='stale');
+  const anyFallback = Object.values(curveStatus).some(s=>s==='fallback');
+  const banner = document.getElementById('staleBanner');
+  if(anyStale){
+    banner.className = 'staleness-banner show';
+    banner.textContent = '⚠ One or more curves were not uploaded today — call Basith to check the GitHub upload before relying on this price.';
+  } else { banner.className = 'staleness-banner'; }
+ 
+  const badge = document.getElementById('statusBadge'), text = document.getElementById('statusText');
+  if(anyFallback || anyStale){
+    badge.className = 'status-badge warn'; text.textContent = anyFallback ? 'FALLBACK DATA' : 'STALE UPLOAD';
+  } else {
+    badge.className = 'status-badge live'; text.textContent = 'LIVE';
+  }
+ 
+  renderRawCurveTables();
+}
+ 
+let rawShown = false;
+function toggleRawCurves(){
+  rawShown = !rawShown;
+  document.getElementById('rawCurveArea').style.display = rawShown ? 'block' : 'none';
+  document.getElementById('rawToggleBtn').textContent = rawShown ? 'Hide raw curve data ▴' : 'View raw curve data ▾';
+}
+function renderRawCurveTables(){
+  const area = document.getElementById('rawCurveArea');
+  area.innerHTML = Object.keys(CURVE_META).map(key=>{
+    const rows = curveState[key].map(([t,r])=>`<tr><td>${t}</td><td>${r}</td></tr>`).join('');
+    return `<div class="card show" style="margin-top:10px;"><div class="card-title">${CURVE_META[key].label}</div>
+      <div class="table-wrap"><table><thead><tr><th>Term</th><th>Rate %</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
+  }).join('');
+}
+ 
+async function autoFetchAllCurves(){
+  document.getElementById('statusBadge').className = 'status-badge fetching';
+  document.getElementById('statusText').textContent = 'FETCHING';
+  await Promise.all(Object.keys(CURVE_META).map(fetchCurve));
+  runPricer(); // show a result immediately with whatever came in
+}
+ 
+/* =========================================================================
+   RUN PRICER
+   ========================================================================= */
+function freqMonths(label){ return {Monthly:1, Quarterly:3, 'Semi-Annual':6}[label] || 6; }
+function fmtINR(x){ return new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(x); }
+function fmtUSD(x){ return new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(x); }
+function parseNotional(raw){
+  const cleaned = String(raw).replace(/[^\d.]/g,'');
+  return cleaned === '' ? NaN : parseFloat(cleaned);
+}
+function reformatNotional(){
+  const el = document.getElementById('notional');
+  const n = parseNotional(el.value);
+  if(!isNaN(n)) el.value = new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(n);
+}
+function showError(msg){
+  const box = document.getElementById('errorBox');
+  box.style.display='block'; box.textContent = msg;
+  setTimeout(()=>{box.style.display='none';}, 8000);
+}
+ 
+function runPricer(){
+  try{
+    const notional = parseNotional(document.getElementById('notional').value);
+    const start = new Date(document.getElementById('startDate').value);
+    const maturity = new Date(document.getElementById('maturityDate').value);
+    const spot = parseFloat(document.getElementById('spot').value);
+    const swapType = document.getElementById('swapType').value;
+    const amortType = document.getElementById('amortType').value;
+    const intFreqMonths = freqMonths(document.getElementById('intFreq').value);
+    const princFreqMonths = amortType==='Bullet' ? intFreqMonths : freqMonths(amortType);
+    const usdSpreadBps = parseFloat(document.getElementById('usdSpread').value);
+    const moratoriumMonths = parseFloat(document.getElementById('moratorium').value)||0;
+ 
+    reformatNotional();
+    if(isNaN(notional)){ showError('Notional did not parse — check the Notional (INR) field.'); return; }
+    if(isNaN(spot) || spot<=0){ showError('USDINR Spot must be a positive number.'); return; }
+    if(isNaN(usdSpreadBps)){ showError('USD Leg Spread (bps) did not parse.'); return; }
+    if(isNaN(start) || isNaN(maturity)){ showError('Enter valid start and maturity dates.'); return; }
+    if(maturity <= start){ showError('Maturity Date must be after Start Date.'); return; }
+ 
+    const sofrRaw = toRaw(curveState.sofr, CURVE_META.sofr.tenorBasis);
+    const inrRaw  = toRaw(curveState.inr_irs, CURVE_META.inr_irs.tenorBasis);
+    const miforRaw= toRaw(curveState.mod_mifor, CURVE_META.mod_mifor.tenorBasis);
+ 
+    const sofrNodes = bootstrap(sofrRaw, CURVE_META.sofr.tau, CURVE_META.sofr.step);
+    const inrNodes  = bootstrap(inrRaw, CURVE_META.inr_irs.tau, CURVE_META.inr_irs.step);
+    const miforNodes= bootstrap(miforRaw, CURVE_META.mod_mifor.tau, CURVE_META.mod_mifor.step);
+ 
+    for(const [label, nodes] of [['SOFR IRS',sofrNodes],['INR IRS',inrNodes],['MOD MIFOR',miforNodes]]){
+      const bad = nodes.find(n=>isNaN(n.DF) || !isFinite(n.DF));
+      if(bad){ showError(`${label} curve has an invalid rate at T=${bad.T.toFixed(2)}y.`); return; }
+    }
+ 
+    const res = runEngine({notional,start,maturity,spot,swapType,amortType,intFreqMonths,
+      princFreqMonths,usdSpreadBps,moratoriumMonths,sofrNodes,inrNodes,miforNodes});
+ 
+    const finalBps = res.breakevenBps;
+    const isFixed = swapType==='floatfixed';
+ 
+    document.getElementById('heroLabel').textContent = isFixed ? 'Breakeven Fixed Rate' : 'Breakeven INR Spread';
+    document.getElementById('spreadBig').innerHTML = isFixed
+      ? (finalBps/100).toFixed(4)+'<span>%</span>'
+      : finalBps.toFixed(1)+'<span>bps</span>';
+    document.getElementById('spreadDecomp').innerHTML =
+      `<span class="hi">USD leg:</span> SOFR + ${usdSpreadBps.toFixed(1)} bps &nbsp;|&nbsp; `+
+      `<span class="hi">Notional:</span> ₹${fmtINR(notional)} &nbsp;|&nbsp; `+
+      `<span class="hi">Spot:</span> ${spot}`;
+    document.getElementById('resultHero').className = 'result-hero show';
+ 
+    document.getElementById('mRate').textContent = (finalBps/100).toFixed(4)+'%';
+    document.getElementById('mPv01').textContent = (res.annuity/10000/100000).toFixed(2);
+    document.getElementById('mUsdNotl').textContent = '$'+fmtUSD(notional/spot);
+    document.getElementById('mPvUsd').textContent = '₹'+fmtINR(res.pvUsdLegINR);
+    document.getElementById('mPv01Raw').textContent = '₹'+fmtINR(Math.round(res.annuity/10000));
+    document.getElementById('mNpv').textContent = res.npvCheck.toFixed(4);
+    document.getElementById('metricsRow').style.display = 'grid';
+ 
+    const head = `<tr><th>#</th><th>Start</th><th>End</th><th>Days</th><th>USD Notl</th><th>Fwd SOFR</th>
+      <th>USD Int</th><th>USD CF</th><th>INR Notl</th><th>Fwd INR-IRS</th><th>INR Int (full)</th>
+      <th>Princ (INR)</th><th>INR CF (full)</th><th>DF MIFOR</th></tr>`;
+    const body = res.rows.map((r,i)=>`<tr>
+      <td>${i+1}</td><td>${r.pStart.toISOString().slice(0,10)}</td><td>${r.pEnd.toISOString().slice(0,10)}</td>
+      <td>${r.D}</td><td>${fmtUSD(r.usdNotional)}</td><td>${(r.fwdSofr*100).toFixed(3)}%</td>
+      <td>${fmtUSD(r.usdInterest)}</td><td>${fmtUSD(r.usdCF)}</td><td>${fmtINR(r.vThis)}</td>
+      <td>${(r.fwdInr*100).toFixed(3)}%</td><td>${fmtINR(r.inrInterestFull)}</td>
+      <td>${fmtINR(r.W)}</td><td>${fmtINR(r.inrCFFull)}</td><td>${r.dfMifor2.toFixed(5)}</td>
+    </tr>`).join('');
+    document.getElementById('cfWrap').innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    document.getElementById('cfCard').className = 'card show';
+ 
+  }catch(e){
+    showError('Pricer error: '+e.message);
+    console.error(e);
+  }
+}
+ 
+/* ---------------------------- init ---------------------------- */
+document.getElementById('startDate').value = new Date().toISOString().slice(0,10);
+const m5 = new Date(); m5.setFullYear(m5.getFullYear()+5);
+document.getElementById('maturityDate').value = m5.toISOString().slice(0,10);
+renderCurveStatus();
+autoFetchAllCurves();
+</script>
+</body>
+</html>
+ 
 
-  GET /inr_irs    -> CCIL MIBOR OIS live table   (used as the "INR IRS" curve)
-  GET /mod_mifor  -> CCIL MODIFIED MIFOR live table
-  GET /sofr       -> BlueGamma public "3 days ago" USD SOFR swap snapshot
-  GET /all        -> all three in one call (what the pricer actually calls)
-  GET /raw_ccil   -> DEBUG: full raw CCIL JSON, unmodified, so you can see the
-                     exact key name CCIL uses for the Modified MIFOR array and
-                     lock it into MODMIFOR_KEYS below if the guess is wrong.
-
-WHY THIS SHAPE
---------------
-CCIL's "Interbank INR Interest Rate Swaps – Real Time Market Watch" page
-(https://www.ccilindia.com/interbank-inr-interest-rate-swaps) renders THREE
-live tables off the SAME Liferay portlet call: MIBOR OIS, Intentional Spread
-Trades, and MODIFIED MIFOR. Your existing IRS Pricer proxy already fetches
-this portlet and parses `resultMiborOis`. This script reuses that exact call
-and additionally parses whichever key holds the Modified MIFOR rows.
-
-I could not confirm the live JSON key name for the Modified MIFOR array from
-here (the page needs a POST with session cookies to return data, which isn't
-reachable from a sandboxed fetch). MODMIFOR_KEYS below lists the most likely
-candidates in order and the code will use the first one that's present. If
-none match, hit /raw_ccil once after deploying, find the correct key from the
-printed top-level keys, and add it to MODMIFOR_KEYS[0].
-
-BLUEGAMMA CAVEAT
-----------------
-BlueGamma's live SOFR swap rates are paywalled ("Unlock ->" on the public
-page) — this script does NOT attempt to get live rates. It scrapes the
-publicly-visible "3 days ago" column only, which is the most recent number
-BlueGamma shows without a login. The pricer must tag this LAGGED, not LIVE.
-Scraping this page programmatically may sit outside BlueGamma's Rate Data
-Terms (https://www.bluegamma.io/legal/rate-data-terms) even though the data
-itself is publicly rendered — worth a read before relying on this in
-production. If you get a BlueGamma API key later, replace fetch_sofr() with
-a call to https://api.bluegamma.io/v1/swap_rate and this becomes a genuine
-LIVE tier instead of a 3-day-lagged one.
-"""
-
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
-import urllib.request
-import json
-import re
-import os
-
-CCIL_URL = (
-    'https://www.ccilindia.com/interbank-inr-interest-rate-swaps'
-    '?p_p_id=CcilRealTimeMarketWatchMainPageAjax_CcilRealTimeMarketWatchMainPageAjaxPortlet_INSTANCE_qown'
-    '&p_p_lifecycle=2&p_p_state=normal&p_p_mode=view'
-    '&p_p_resource_id=mainReport&p_p_cacheability=cacheLevelPage'
-)
-
-BLUEGAMMA_URL = 'https://www.bluegamma.io/usd-swap-rates'
-
-TENORS = ['1M', '2M', '3M', '6M', '9M', '1Y', '2Y', '3Y', '4Y', '5Y', '7Y', '10Y']
-
-# Ordered guesses for the Modified MIFOR array's JSON key — first hit wins.
-# Confirm/replace via /raw_ccil after first deploy.
-MODMIFOR_KEYS = [
-    'resultModMifor', 'resultMmfor', 'resultModifiedMifor',
-    'resultMIFOR', 'resultMifor', 'resultMMFOR',
-]
-OIS_KEYS = ['resultMiborOis']
 
 
-def _fetch_ccil_raw():
-    req = urllib.request.Request(
-        CCIL_URL, method="POST",
-        headers={
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Referer': 'https://www.ccilindia.com/interbank-inr-interest-rate-swaps',
-            'User-Agent': 'Mozilla/5.0',
-        })
-    with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read())
-    return data
 
 
-def _extract_rate_rows(raw_array):
-    """Same row-shape used by the existing IRS pricer proxy, plus: skip any
-    tenor where CCIL genuinely has no usable number today (both the live
-    weighted-average and the previous-close are null/zero) — returning a
-    fake 0% rate for an untraded tenor would badly distort the curve."""
-    rows = []
-    for r in raw_array:
-        tenor = r.get('ismy_trad_mrty')
-        if tenor not in TENORS:
-            continue
-        warr = float(r.get('ismy_drvt_warr') or 0)
-        prev = float(r.get('ismy_prev_lrrt') or r.get('ismy_drvt_prcls') or 0)
-        rate = warr if warr > 0 else prev
-        if rate <= 0:
-            continue  # no data for this tenor today — leave it out, don't fabricate 0%
-        rows.append({
-            'tenor': tenor,
-            'rate': rate,
-            'prev_close': prev if prev > 0 else None,
-            'volume': float(r.get('ismy_drvt_ttrvl') or r.get('ismy_drvt_volm') or 0),
-            'trades': int(r.get('ismy_drvt_notrd') or r.get('ismy_trad_cntt') or 0),
-            'source': 'LIVE' if warr > 0 else 'PREV_CLOSE',
-        })
-    return rows
 
 
-def fetch_ccil_curve(candidate_keys):
-    data = _fetch_ccil_raw()
-    for key in candidate_keys:
-        if key in data:
-            raw = data[key]
-            if isinstance(raw, str):
-                raw = json.loads(raw)
-            rows = _extract_rate_rows(raw)
-            if rows:
-                return {'ok': True, 'rates': rows, 'key_used': key}
-    return {'ok': False, 'error': f'none of {candidate_keys} found/populated',
-            'available_keys': list(data.keys())}
 
 
-def fetch_sofr_raw_html():
-    """Debug helper: returns a slice of BlueGamma's actual page HTML around
-    the rates table, so the real markup can be inspected and the scraper in
-    fetch_sofr_3day() rewritten against it instead of guessed."""
-    req = urllib.request.Request(
-        BLUEGAMMA_URL, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        html = r.read().decode('utf-8', errors='ignore')
-    idx = html.find('Tenor')
-    if idx == -1:
-        idx = 0
-    snippet = html[max(0, idx - 1000): idx + 12000]
-    return {'ok': True, 'total_length': len(html), 'snippet': snippet}
-
-
-def fetch_sofr_3day():
-    """
-    Scrapes the publicly visible '3 days ago' column from BlueGamma's USD
-    swap rates page. This is NOT live — see module docstring caveat.
-    Row structure (confirmed against the actual page): tenor sits in
-    <a class="gr-tenor-link">1 Month</a>, followed by 5 <td> cells —
-    Live (a locked button, no number), 3-days-ago, 1-week-ago, 1-month-ago,
-    1-year-ago. We want the second cell (3-days-ago).
-    """
-    req = urllib.request.Request(
-        BLUEGAMMA_URL, headers={'User-Agent': 'Mozilla/5.0'})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        html = r.read().decode('utf-8', errors='ignore')
-
-    row_re = re.compile(
-        r'class="gr-tenor-link">(\d+)\s*(Month|Year)</a>.*?<td[^>]*>.*?</td>\s*<td[^>]*>([\d.]+)%</td>',
-        re.DOTALL)
-    unit_map = {'Month': 'M', 'Year': 'Y'}
-    rows = []
-    for m in row_re.finditer(html):
-        num, unit, rate = m.groups()
-        rows.append({
-            'tenor': f'{num}{unit_map[unit]}',
-            'rate': float(rate),
-            'source': '3-DAY LAGGED (BlueGamma public snapshot)',
-        })
-    if not rows:
-        return {'ok': False, 'error': 'no rows parsed — BlueGamma page layout may have changed'}
-    return {'ok': True, 'rates': rows, 'as_of': 'T-3 business days (public snapshot only)'}
-
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.handle_request()
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self._cors()
-        self.end_headers()
-
-    def _cors(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-
-    def handle_request(self):
-        path = urlparse(self.path).path
-        try:
-            if path == '/inr_irs':
-                body = fetch_ccil_curve(OIS_KEYS)
-            elif path == '/mod_mifor':
-                body = fetch_ccil_curve(MODMIFOR_KEYS)
-            elif path == '/sofr':
-                body = fetch_sofr_3day()
-            elif path == '/raw_ccil':
-                body = _fetch_ccil_raw()
-            elif path == '/raw_sofr':
-                body = fetch_sofr_raw_html()
-            elif path == '/all':
-                body = {
-                    'inr_irs': fetch_ccil_curve(OIS_KEYS),
-                    'mod_mifor': fetch_ccil_curve(MODMIFOR_KEYS),
-                    'sofr': fetch_sofr_3day(),
-                }
-            else:
-                body = {'ok': False, 'error': 'unknown route',
-                        'routes': ['/inr_irs', '/mod_mifor', '/sofr', '/all', '/raw_ccil', '/raw_sofr']}
-            payload = json.dumps(body, default=str).encode()
-            self.send_response(200)
-        except Exception as e:
-            payload = json.dumps({'ok': False, 'error': str(e)}).encode()
-            self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self._cors()
-        self.end_headers()
-        self.wfile.write(payload)
-
-    def log_message(self, *a):
-        pass
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 10000))
-    print('CCIRS proxy running on port', port)
-    HTTPServer(("", port), Handler).serve_forever()
