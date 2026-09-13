@@ -129,15 +129,18 @@ tbody td:first-child{text-align:left;}
         <button type="button" onclick="fetchUsdInrSpot(true)" title="Refresh now" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2);border-radius:5px;padding:0 10px;cursor:pointer;font-size:14px;">↻</button>
       </div></div>
     <div class="field"><label>SWAP TYPE</label>
-      <select id="swapType">
-        <option value="floatfloat" selected>Float/Float (INR)</option>
-        <option value="floatfixed">Float/Fixed (INR Fixed)</option>
+      <select id="swapType" onchange="updateSwapTypeFields()">
+        <option value="floatfloat" selected>Float USD / Float INR</option>
+        <option value="floatfixed">Float USD / Fixed INR</option>
+        <option value="fixedfloat">Fixed USD / Float INR</option>
+        <option value="fixedfixed">Fixed USD / Fixed INR</option>
       </select></div>
     <div class="field"><label>PRINCIPAL AMORTISATION</label>
       <select id="amortType"><option>Bullet</option><option>Monthly</option><option>Quarterly</option><option>Semi-Annual</option></select></div>
     <div class="field"><label>INTEREST PAYMENT FREQUENCY</label>
       <select id="intFreq"><option>Monthly</option><option>Quarterly</option><option selected>Semi-Annual</option></select></div>
-    <div class="field"><label>USD LEG SPREAD (bps)</label><input type="number" id="usdSpread" value="100" step="1"></div>
+    <div class="field" id="usdSpreadField"><label>USD LEG SPREAD (bps)</label><input type="number" id="usdSpread" value="100" step="1"></div>
+    <div class="field" id="usdFixedField" style="display:none;"><label>USD FIXED RATE (%)</label><input type="number" id="usdFixedRate" value="4.50" step="0.01"></div>
     <div class="field"><label>MORATORIUM (MONTHS)</label><input type="number" id="moratorium" value="0" step="1"></div>
   </div>
 </div>
@@ -290,9 +293,14 @@ function curveDF(nodes, t){
    ========================================================================= */
 function runEngine(inputs){
   const { notional, start, maturity, spot, swapType, amortType, intFreqMonths,
-          princFreqMonths, usdSpreadBps, moratoriumMonths, sofrNodes, inrNodes, miforNodes } = inputs;
+          princFreqMonths, usdSpreadBps, usdFixedRatePct, moratoriumMonths, sofrNodes, inrNodes, miforNodes } = inputs;
  
-  const isFixed = swapType==='floatfixed';
+  // Swap type is a 2x2: which side (USD, INR) floats vs is fixed.
+  // USD leg is ALWAYS discounted off SOFR regardless of float/fixed —
+  // going fixed only removes the forward-SOFR projection component, not
+  // the discount curve.
+  const isUsdFixed = (swapType==='fixedfloat' || swapType==='fixedfixed');
+  const isInrFixed = (swapType==='floatfixed' || swapType==='fixedfixed');
   const isBullet = amortType==='Bullet';
  
   const periods = [];
@@ -326,11 +334,16 @@ function runEngine(inputs){
     const t1 = yearsBetween365(start, p.pStart);
     const t2 = yearsBetween365(start, p.pEnd);
  
-    const dfSofr1 = curveDF(sofrNodes, t1), dfSofr2 = curveDF(sofrNodes, t2);
-    const fwdSofr = (t2-t1)>1e-9 ? (dfSofr1/dfSofr2 - 1)/(t2-t1) : 0;
+    let fwdSofr = 0;
+    if(!isUsdFixed){
+      const dfSofr1 = curveDF(sofrNodes, t1);
+      const dfSofr2x = curveDF(sofrNodes, t2);
+      fwdSofr = (t2-t1)>1e-9 ? (dfSofr1/dfSofr2x - 1)/(t2-t1) : 0;
+    }
+    const dfSofr2 = curveDF(sofrNodes, t2); // USD leg ALWAYS discounts off SOFR
  
     let fwdInr = 0;
-    if(!isFixed){
+    if(!isInrFixed){
       const dfInr1 = curveDF(inrNodes, t1), dfInr2 = curveDF(inrNodes, t2);
       fwdInr = (t2-t1)>1e-9 ? (dfInr1/dfInr2 - 1)/(t2-t1) : 0;
     }
@@ -341,7 +354,7 @@ function runEngine(inputs){
     const usdNotional = vThis/spot;
     const usdPrincipal = W/spot;
  
-    const usdAllIn = fwdSofr + usdSpreadBps/10000;
+    const usdAllIn = isUsdFixed ? (usdFixedRatePct/100) : (fwdSofr + usdSpreadBps/10000);
     const usdInterest = usdNotional*usdAllIn*F;
     const usdCF = usdInterest + usdPrincipal;
     const usdPV = usdCF*dfSofr2;
@@ -542,6 +555,11 @@ async function autoFetchAllCurves(){
 /* =========================================================================
    RUN PRICER
    ========================================================================= */
+function updateSwapTypeFields(){
+  const isUsdFixed = ['fixedfloat','fixedfixed'].includes(document.getElementById('swapType').value);
+  document.getElementById('usdSpreadField').style.display = isUsdFixed ? 'none' : 'block';
+  document.getElementById('usdFixedField').style.display = isUsdFixed ? 'block' : 'none';
+}
 function freqMonths(label){ return {Monthly:1, Quarterly:3, 'Semi-Annual':6}[label] || 6; }
 function fmtINR(x){ return new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(x); }
 function fmtUSD(x){ return new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(x); }
@@ -571,12 +589,16 @@ function runPricer(){
     const intFreqMonths = freqMonths(document.getElementById('intFreq').value);
     const princFreqMonths = amortType==='Bullet' ? intFreqMonths : freqMonths(amortType);
     const usdSpreadBps = parseFloat(document.getElementById('usdSpread').value);
+    const usdFixedRatePct = parseFloat(document.getElementById('usdFixedRate').value);
     const moratoriumMonths = parseFloat(document.getElementById('moratorium').value)||0;
+    const isUsdFixed = ['fixedfloat','fixedfixed'].includes(swapType);
+    const isInrFixed = ['floatfixed','fixedfixed'].includes(swapType);
  
     reformatNotional();
     if(isNaN(notional)){ showError('Notional did not parse — check the Notional (INR) field.'); return; }
     if(isNaN(spot) || spot<=0){ showError('USDINR Spot must be a positive number.'); return; }
-    if(isNaN(usdSpreadBps)){ showError('USD Leg Spread (bps) did not parse.'); return; }
+    if(!isUsdFixed && isNaN(usdSpreadBps)){ showError('USD Leg Spread (bps) did not parse.'); return; }
+    if(isUsdFixed && isNaN(usdFixedRatePct)){ showError('USD Fixed Rate (%) did not parse.'); return; }
     if(isNaN(start) || isNaN(maturity)){ showError('Enter valid start and maturity dates.'); return; }
     if(maturity <= start){ showError('Maturity Date must be after Start Date.'); return; }
  
@@ -594,17 +616,19 @@ function runPricer(){
     }
  
     const res = runEngine({notional,start,maturity,spot,swapType,amortType,intFreqMonths,
-      princFreqMonths,usdSpreadBps,moratoriumMonths,sofrNodes,inrNodes,miforNodes});
+      princFreqMonths,usdSpreadBps,usdFixedRatePct,moratoriumMonths,sofrNodes,inrNodes,miforNodes});
  
     const finalBps = res.breakevenBps;
-    const isFixed = swapType==='floatfixed';
  
-    document.getElementById('heroLabel').textContent = isFixed ? 'Breakeven Fixed Rate' : 'Breakeven INR Spread';
-    document.getElementById('spreadBig').innerHTML = isFixed
+    document.getElementById('heroLabel').textContent = isInrFixed ? 'Breakeven Fixed Rate' : 'Breakeven INR Spread';
+    document.getElementById('spreadBig').innerHTML = isInrFixed
       ? (finalBps/100).toFixed(4)+'<span>%</span>'
       : finalBps.toFixed(1)+'<span>bps</span>';
+    const usdLegDesc = isUsdFixed
+      ? `${usdFixedRatePct.toFixed(3)}% fixed (disc. off SOFR)`
+      : `SOFR + ${usdSpreadBps.toFixed(1)} bps`;
     document.getElementById('spreadDecomp').innerHTML =
-      `<span class="hi">USD leg:</span> SOFR + ${usdSpreadBps.toFixed(1)} bps &nbsp;|&nbsp; `+
+      `<span class="hi">USD leg:</span> ${usdLegDesc} &nbsp;|&nbsp; `+
       `<span class="hi">Notional:</span> ₹${fmtINR(notional)} &nbsp;|&nbsp; `+
       `<span class="hi">Spot:</span> ${spot}`;
     document.getElementById('resultHero').className = 'result-hero show';
@@ -641,7 +665,9 @@ document.getElementById('startDate').value = new Date().toISOString().slice(0,10
 const m5 = new Date(); m5.setFullYear(m5.getFullYear()+5);
 document.getElementById('maturityDate').value = m5.toISOString().slice(0,10);
 renderCurveStatus();
+updateSwapTypeFields();
 autoFetchAllCurves();
 </script>
 </body>
 </html>
+ 
