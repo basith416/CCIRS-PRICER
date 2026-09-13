@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>USD/INR CCIRS Pricer</title>
+<style>
+  :root{
+    --navy:#16233f; --yellow:#d4d020; --grey:#e2e2e2;
+    --green:#2f7d32; --greenrow:#a7c957; --blue:#1f2fb0; --border:#9aa0a6;
+    --red:#c0392b;
+  }
+  *{box-sizing:border-box;}
+  body{background:#fff;color:#111;font-family:Calibri,Arial,sans-serif;margin:0;padding:22px;font-size:14px;}
+  .wrap{max-width:640px;margin:0 auto;}
+  h1{font-size:16px;margin:0 0 14px;text-align:center;letter-spacing:.3px;}
+  table.sheet{width:100%;border-collapse:collapse;margin-bottom:4px;}
+  table.sheet td, table.sheet th{border:1px solid var(--border);padding:6px 10px;font-size:13.5px;}
+  tr.hdr th{background:var(--navy);color:#fff;text-align:left;font-size:13px;letter-spacing:.4px;padding:7px 10px;}
+  td.label{width:58%;font-weight:600;color:#222;background:#fff;}
+  td.val{width:42%;text-align:right;background:var(--yellow);color:var(--blue);font-weight:600;}
+  td.val.derived{background:var(--grey);color:#333;}
+  td.val input, td.val select{
+    width:100%;border:none;background:transparent;text-align:right;font-weight:600;
+    color:var(--blue);font-size:13.5px;font-family:inherit;
+  }
+  td.val.out{background:#fff;color:var(--green);font-weight:700;}
+  tr.highlight td.val{background:var(--greenrow);color:#1a1a1a;}
+  .errbox{display:none;background:#fdecea;border:1px solid var(--red);color:var(--red);
+    padding:8px 12px;border-radius:4px;margin-bottom:10px;font-size:12.5px;}
+  .solve-row{text-align:center;margin:16px 0;}
+  button.solve{background:var(--navy);color:#fff;border:none;padding:9px 30px;
+    font-size:14px;border-radius:4px;cursor:pointer;font-weight:600;}
+  button.solve:hover{opacity:.88;}
+  .curves-toggle{margin-top:22px;text-align:center;}
+  button.toggle{background:#fff;border:1px solid var(--navy);color:var(--navy);
+    padding:7px 20px;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600;}
+  button.toggle:hover{background:#f0f0f0;}
+  #curveArea{display:none;margin-top:16px;}
+  .proxy-row{display:flex;gap:8px;align-items:center;margin:10px 0 16px;font-size:12px;}
+  .proxy-row input{flex:1;border:1px solid var(--border);border-radius:4px;padding:6px 8px;font-size:12px;}
+  .proxy-row button{background:var(--navy);color:#fff;border:none;padding:6px 14px;
+    border-radius:4px;font-size:12px;cursor:pointer;}
+  .curve-panel{border:1px solid var(--border);border-radius:4px;margin-bottom:14px;overflow:hidden;}
+  .curve-head{background:var(--navy);color:#fff;padding:6px 10px;font-size:12.5px;
+    display:flex;justify-content:space-between;align-items:center;}
+  .badge{font-size:10px;padding:2px 7px;border-radius:3px;letter-spacing:.3px;font-weight:600;}
+  .badge.live{background:#2f7d32;color:#fff;}
+  .badge.lag{background:#b7860b;color:#fff;}
+  .badge.manual{background:#1f2fb0;color:#fff;}
+  .badge.fallback{background:#888;color:#fff;}
+  .curve-body{padding:8px 10px;}
+  .curve-note{color:#666;font-size:11px;margin-bottom:6px;}
+  table.curve-tbl{width:100%;border-collapse:collapse;font-size:11.5px;}
+  table.curve-tbl td{border-bottom:1px solid #eee;padding:2px 4px;}
+  table.curve-tbl td:first-child{width:40%;}
+  table.curve-tbl input{width:100%;text-align:right;border:1px solid #ddd;border-radius:2px;font-size:11.5px;padding:1px 3px;}
+  textarea.paste{width:100%;height:50px;font-size:10.5px;font-family:monospace;
+    border:1px solid #ddd;border-radius:3px;padding:5px;margin-top:6px;}
+  .curve-btns{display:flex;gap:6px;margin-top:6px;}
+  .curve-btns button{font-size:11px;padding:4px 9px;border-radius:3px;border:1px solid var(--border);
+    background:#fff;cursor:pointer;}
+  .curve-btns button:hover{background:#f2f2f2;}
+  #cfSection{margin-top:18px;}
+  #cfWrap{max-height:360px;overflow:auto;border:1px solid var(--border);}
+  #cfWrap table{width:100%;border-collapse:collapse;font-size:10.5px;font-family:monospace;}
+  #cfWrap th,#cfWrap td{border:1px solid #ddd;padding:3px 5px;text-align:right;white-space:nowrap;}
+  #cfWrap th{background:var(--navy);color:#fff;position:sticky;top:0;}
+  #cfWrap td:first-child,#cfWrap th:first-child{text-align:left;}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>USD/INR CROSS CURRENCY SWAP PRICER</h1>
+<div class="errbox" id="errorBox"></div>
+
+<table class="sheet">
+  <tr class="hdr"><th colspan="2">TRADE INPUTS</th></tr>
+  <tr><td class="label">Notional (INR)</td><td class="val"><input type="text" id="notional" value="5,00,00,00,000" onblur="reformatNotional()"></td></tr>
+  <tr><td class="label">Start Date</td><td class="val"><input type="date" id="startDate"></td></tr>
+  <tr><td class="label">Maturity Date</td><td class="val"><input type="date" id="maturityDate"></td></tr>
+  <tr><td class="label">Swap Type</td><td class="val">
+    <select id="swapType">
+      <option value="floatfloat" selected>Float/Float (MCCS)</option>
+      <option value="floatfixed">Float/Fixed (INR Fixed)</option>
+    </select></td></tr>
+  <tr><td class="label">Principal Amortisation</td><td class="val">
+    <select id="amortType"><option>Bullet</option><option>Monthly</option><option>Quarterly</option><option>Semi-Annual</option></select></td></tr>
+  <tr><td class="label">Interest Payment Frequency</td><td class="val">
+    <select id="intFreq"><option>Monthly</option><option>Quarterly</option><option selected>Semi-Annual</option></select></td></tr>
+  <tr><td class="label">USD Leg Spread (bps)</td><td class="val"><input type="number" id="usdSpread" value="100" step="1"></td></tr>
+  <tr><td class="label">USDINR Spot</td><td class="val"><input type="number" id="spot" value="95.27" step="0.01"></td></tr>
+  <tr><td class="label">Principal Freq (months, derived)</td><td class="val derived" id="princFreqDisp">0</td></tr>
+  <tr><td class="label">Interest Freq (months, derived)</td><td class="val derived" id="intFreqDisp">6</td></tr>
+  <tr><td class="label">Bloomberg calibration (bps)</td><td class="val"><input type="number" id="calib" value="0" step="0.1"></td></tr>
+  <tr><td class="label">Moratorium (Months)</td><td class="val"><input type="number" id="moratorium" value="0" step="1"></td></tr>
+
+  <tr class="hdr"><th colspan="2">OUTPUTS</th></tr>
+  <tr><td class="label" id="spreadLabel">Breakeven INR Spread (bps) [= fixed rate×100 if Float/Fixed]</td><td class="val out" id="outSpread">—</td></tr>
+  <tr><td class="label">Equivalent Rate (%)</td><td class="val out" id="outRate">—</td></tr>
+  <tr><td class="label">INR Leg PV01 (₹ per bp)</td><td class="val out" id="outPV01">—</td></tr>
+  <tr class="highlight"><td class="label">INR Leg PV01 (₹ Lakhs)</td><td class="val out" id="outPV01L">—</td></tr>
+  <tr><td class="label">USD Notional Equivalent</td><td class="val out" id="outUsdNotl">—</td></tr>
+  <tr><td class="label">PV USD Leg (INR @ spot)</td><td class="val out" id="outPvUsd">—</td></tr>
+  <tr><td class="label">NPV Check (should be ≈ 0)</td><td class="val out" id="outNpv">—</td></tr>
+</table>
+
+<div class="solve-row"><button class="solve" onclick="runPricer()">SOLVE</button></div>
+
+<div id="cfSection" style="display:none;">
+  <table class="sheet"><tr class="hdr"><th>CASHFLOW SCHEDULE</th></tr></table>
+  <div id="cfWrap"></div>
+</div>
+
+<div class="curves-toggle">
+  <button class="toggle" id="curveToggleBtn" onclick="toggleCurves()">Show Curves ▾</button>
+</div>
+
+<div id="curveArea">
+  <div class="proxy-row">
+    <input type="text" id="proxyUrl" placeholder="https://ccirs-proxy.onrender.com (your deployed proxy)" value="">
+    <button onclick="fetchAllLive()">Fetch All Live</button>
+  </div>
+  <div id="curvePanels"></div>
+</div>
+
+</div>
+
+<script>
+/* =========================================================================
+   FALLBACK CURVES — verbatim from Curve_Backend, CCIRS_pricer_11-09-2026.xlsx
+   ========================================================================= */
+const FALLBACK = {
+  sofr: [["1 WK",3.757],["2 WK",3.786],["3 WK",3.8055],["1 MO",3.81475],["2 MO",3.85774],
+    ["3 MO",3.898],["4 MO",3.964],["5 MO",4.016],["6 MO",4.05315],["7 MO",4.1045],
+    ["8 MO",4.15285],["9 MO",4.19375],["10 MO",4.2356],["11 MO",4.2755],["12 MO",4.30908],
+    ["18 MO",4.3899],["2 YR",4.44316],["3 YR",4.46391],["4 YR",4.46641],["5 YR",4.47231],
+    ["6 YR",4.48321],["7 YR",4.49715],["8 YR",4.51404],["9 YR",4.53387],["10 YR",4.55605],
+    ["12 YR",4.60427],["15 YR",4.66985],["20 YR",4.7212],["25 YR",4.70396],["30 YR",4.65377],
+    ["40 YR",4.52785],["50 YR",4.39138]],
+  inr_irs: [["1 MO",5.27],["2 MO",5.37],["3 MO",5.475],["6 MO",5.69],["9 MO",5.89],
+    ["1 YR",6.081],["2 YR",6.3],["3 YR",6.42],["4 YR",6.525],["5 YR",6.61],
+    ["7 YR",6.71],["10 YR",6.81]],
+  mod_mifor: [["1 MO",7.1325],["2 MO",7.35135],["3 MO",7.4586],["6 MO",7.6927],
+    ["12 MO",7.90835],["2 YR",7.565],["3 YR",7.585],["4 YR",7.625],["5 YR",7.665],
+    ["7 YR",7.795],["10 YR",7.885]]
+};
+
+const CURVE_META = {
+  sofr:     {label:'SOFR IRS', tau:365/360, step:1,   tenorBasis:360,
+    note:'BlueGamma live SOFR is paywalled — proxy pulls the public 3-day-old snapshot only.'},
+  inr_irs:  {label:'INR IRS',  tau:0.5,     step:0.5, tenorBasis:365,
+    note:'CCIL Interbank INR IRS — Real Time Market Watch, MIBOR OIS table.'},
+  mod_mifor:{label:'MOD MIFOR',tau:0.5,     step:0.5, tenorBasis:365,
+    note:'CCIL Interbank INR IRS — Real Time Market Watch, Modified MIFOR table.'}
+};
+
+let curveState = { sofr: FALLBACK.sofr.slice(), inr_irs: FALLBACK.inr_irs.slice(), mod_mifor: FALLBACK.mod_mifor.slice() };
+
+// ---- SET THIS ONCE after you deploy ccirs_proxy.py on Render, then push to
+// GitHub — every visitor's copy of the page will auto-fill this, so no one
+// has to paste a proxy URL in by hand. Leave blank to require manual entry.
+const DEFAULT_PROXY_URL = '';
+
+/* ---------------------------- tenor / date utils ---------------------------- */
+function parseTenorYears(label, basis){
+  const m = label.trim().toUpperCase().match(/^(\d+(?:\.\d+)?)\s*(WK|MO|YR|M|Y)$/);
+  if(!m) return null;
+  const n = parseFloat(m[1]);
+  const unit = m[2];
+  if(unit==='WK') return n*7/basis;
+  if(unit==='MO'||unit==='M') return n/12;
+  return n;
+}
+function toRaw(pairs, basis){
+  return pairs.map(([term,rate])=>({term, rate:parseFloat(rate), T: parseTenorYears(term, basis)}))
+              .filter(n=>n.T!==null && !isNaN(n.rate)).sort((a,b)=>a.T-b.T);
+}
+function edate(date, months){
+  // UTC throughout — must match how <input type=date> values parse (always
+  // UTC midnight), or a user in a timezone ahead of UTC (e.g. IST) gets a
+  // spurious sub-day final period when local-midnight end dates land a few
+  // hours short of a UTC-midnight maturity, which then divides by ~zero.
+  const targetMonth = date.getUTCMonth()+months;
+  const targetYear = date.getUTCFullYear() + Math.floor(targetMonth/12);
+  const m = ((targetMonth%12)+12)%12;
+  const lastDay = new Date(Date.UTC(targetYear, m+1, 0)).getUTCDate();
+  const day = Math.min(date.getUTCDate(), lastDay);
+  return new Date(Date.UTC(targetYear, m, day));
+}
+function daysBetween(a,b){ return Math.round((b-a)/86400000); }
+function yearsBetween365(a,b){ return daysBetween(a,b)/365; }
+
+/* ---------------------------- interpolation on raw quotes ---------------------------- */
+function interpRawRate(raw, t){
+  if(t <= raw[0].T) return raw[0].rate;
+  for(let i=0;i<raw.length-1;i++){
+    if(t>=raw[i].T && t<=raw[i+1].T){
+      const w = (t-raw[i].T)/(raw[i+1].T-raw[i].T);
+      return raw[i].rate + w*(raw[i+1].rate-raw[i].rate);
+    }
+  }
+  return raw[raw.length-1].rate;
+}
+
+/* ---------------------------- bootstrap ---------------------------- */
+function bootstrap(raw, tau, step){
+  const nodes = [];
+  raw.filter(n=>n.T<=1+1e-9).forEach(n=>{
+    nodes.push({T:n.T, DF: 1/(1+(n.rate/100)*n.T)});
+  });
+  const maxT = raw[raw.length-1].T;
+  let t = 1 + step;
+  while(t <= maxT + 1e-9){
+    const rate = interpRawRate(raw, t);
+    let cumsum = 0;
+    for(let cd = step; cd < t-1e-9; cd += step){
+      const node = nodes.find(n=>Math.abs(n.T-cd)<1e-6);
+      if(node) cumsum += node.DF;
+    }
+    const DF = (1 - (rate/100)*tau*cumsum) / (1 + (rate/100)*tau);
+    nodes.push({T:t, DF});
+    t += step;
+  }
+  nodes.sort((a,b)=>a.T-b.T);
+  nodes.forEach(n=> n.Z = n.T>0 ? -Math.log(n.DF)/n.T*100 : 0);
+  return nodes;
+}
+
+/* ---------------------------- curve DF lookup ----------------------------
+   Ported exactly from the Excel pattern IFERROR(MATCH(t,CURVE_T,1),1): a
+   lookup date before the curve's first node does NOT get flat DF=1 — Excel
+   defaults the match index to 1 and runs the SAME interpolation formula,
+   which backward-extrapolates using the slope between nodes[0] and nodes[1].
+   idx starts at 0 (JS-index equivalent of Excel's default index 1) and stays
+   there when no node.T <= t, reproducing that fallback automatically. */
+function curveDF(nodes, t){
+  if(t<=0) return 1;
+  let idx = 0;
+  for(let i=0;i<nodes.length;i++){ if(nodes[i].T<=t) idx=i; }
+  if(idx === nodes.length-1){
+    const a = nodes[idx-1], b = nodes[idx];
+    const zt0 = a.Z/100*a.T, zt1 = b.Z/100*b.T;
+    const slope = (zt1-zt0)/(b.T-a.T);
+    return Math.exp(-(zt1 + slope*(t-b.T)));
+  }
+  const a = nodes[idx], b = nodes[idx+1];
+  const zt0 = a.Z/100*a.T, zt1 = b.Z/100*b.T;
+  const w = (t-a.T)/(b.T-a.T);
+  return Math.exp(-(zt0 + w*(zt1-zt0)));
+}
+
+/* =========================================================================
+   CASHFLOW ENGINE
+   ========================================================================= */
+function runEngine(inputs){
+  const { notional, start, maturity, spot, swapType, amortType, intFreqMonths,
+          princFreqMonths, usdSpreadBps, moratoriumMonths, sofrNodes, inrNodes, miforNodes } = inputs;
+
+  const isFixed = swapType==='floatfixed';
+  const isBullet = amortType==='Bullet';
+
+  const periods = [];
+  let cursor = new Date(start.getTime());
+  let pnum = 0;
+  while(cursor < maturity){
+    pnum++;
+    const pStart = new Date(cursor.getTime());
+    let pEnd = edate(pStart, intFreqMonths);
+    if(pEnd > maturity) pEnd = new Date(maturity.getTime());
+    const monthsSinceStart = (pEnd.getFullYear()-start.getFullYear())*12 + (pEnd.getMonth()-start.getMonth());
+    let isPrincipalDate;
+    if(isBullet){
+      isPrincipalDate = (pEnd.getTime()===maturity.getTime());
+    } else {
+      const adj = monthsSinceStart - moratoriumMonths;
+      isPrincipalDate = ((adj>0 && adj % princFreqMonths===0) || pEnd.getTime()===maturity.getTime());
+    }
+    periods.push({pStart, pEnd, isPrincipalDate});
+    cursor = pEnd;
+    if(pnum>240) break;
+  }
+  const totalPrincipalDates = periods.filter(p=>p.isPrincipalDate).length || 1;
+
+  let inrOutstanding = notional;
+  let pvUsdLegUSD = 0, pvInrLegBase = 0, annuity = 0;
+  const rows = [];
+  periods.forEach(p=>{
+    const D = daysBetween(p.pStart, p.pEnd);
+    const E = D/365, F = D/360;
+    const t1 = yearsBetween365(start, p.pStart);
+    const t2 = yearsBetween365(start, p.pEnd);
+
+    const dfSofr1 = curveDF(sofrNodes, t1), dfSofr2 = curveDF(sofrNodes, t2);
+    const fwdSofr = (t2-t1)>1e-9 ? (dfSofr1/dfSofr2 - 1)/(t2-t1) : 0;
+
+    let fwdInr = 0;
+    if(!isFixed){
+      const dfInr1 = curveDF(inrNodes, t1), dfInr2 = curveDF(inrNodes, t2);
+      fwdInr = (t2-t1)>1e-9 ? (dfInr1/dfInr2 - 1)/(t2-t1) : 0;
+    }
+    const dfMifor2 = curveDF(miforNodes, t2);
+
+    const vThis = inrOutstanding;
+    const W = p.isPrincipalDate ? (isBullet ? vThis : notional/totalPrincipalDates) : 0;
+    const usdNotional = vThis/spot;
+    const usdPrincipal = W/spot;
+
+    const usdAllIn = fwdSofr + usdSpreadBps/10000;
+    const usdInterest = usdNotional*usdAllIn*F;
+    const usdCF = usdInterest + usdPrincipal;
+    const usdPV = usdCF*dfSofr2;
+
+    const inrInterestBase = vThis*fwdInr*E;
+    const inrCFBase = inrInterestBase + W;
+    const inrPVBase = inrCFBase*dfMifor2;
+    const inrAnnuity = vThis*E*dfMifor2;
+
+    pvUsdLegUSD += usdPV;
+    pvInrLegBase += inrPVBase;
+    annuity += inrAnnuity;
+
+    rows.push({...p, D,E,F,t1,t2, fwdSofr, fwdInr, dfSofr2, dfMifor2, vThis, W, usdNotional,
+               usdPrincipal, usdInterest, usdCF, usdPV, inrInterestBase, inrCFBase, inrPVBase, inrAnnuity});
+
+    inrOutstanding = inrOutstanding - W;
+  });
+
+  const pvUsdLegINR = pvUsdLegUSD*spot;
+  const breakevenDecimal = (pvUsdLegINR - pvInrLegBase)/annuity;
+  const breakevenBps = breakevenDecimal*10000;
+
+  let pvInrLegFull = 0;
+  rows.forEach(r=>{
+    const spreadContrib = r.vThis*breakevenDecimal*r.E;
+    const inrInterestFull = r.inrInterestBase + spreadContrib;
+    const inrCFFull = inrInterestFull + r.W;
+    const inrPVFull = r.inrPVBase + spreadContrib*r.dfMifor2;
+    r.inrInterestFull = inrInterestFull; r.inrCFFull = inrCFFull; r.inrPVFull = inrPVFull;
+    pvInrLegFull += inrPVFull;
+  });
+
+  return {
+    rows, pvUsdLegUSD, pvUsdLegINR, pvInrLegBase, annuity,
+    breakevenDecimal, breakevenBps, pvInrLegFull,
+    npvCheck: pvInrLegFull - pvUsdLegINR,
+    totalPrincipalDates
+  };
+}
+
+/* =========================================================================
+   CURVE PANEL UI (behind the toggle)
+   ========================================================================= */
+let curvesBuilt = false;
+function toggleCurves(){
+  const area = document.getElementById('curveArea');
+  const btn = document.getElementById('curveToggleBtn');
+  const showing = area.style.display === 'block';
+  area.style.display = showing ? 'none' : 'block';
+  btn.textContent = showing ? 'Show Curves ▾' : 'Hide Curves ▴';
+  if(!curvesBuilt){ renderPanels(); curvesBuilt = true; }
+}
+function renderPanels(){
+  const wrap = document.getElementById('curvePanels');
+  wrap.innerHTML='';
+  Object.keys(CURVE_META).forEach(key=>{
+    const meta = CURVE_META[key];
+    const div = document.createElement('div');
+    div.className='curve-panel';
+    div.innerHTML = `
+      <div class="curve-head"><span>${meta.label}</span><span class="badge fallback" id="badge_${key}">FALLBACK</span></div>
+      <div class="curve-body">
+        <div class="curve-note">${meta.note}</div>
+        <table class="curve-tbl" id="tbl_${key}"></table>
+        <textarea class="paste" id="paste_${key}" placeholder="Paste Term&#9;Rate rows (Bloomberg-style)"></textarea>
+        <div class="curve-btns">
+          <button onclick="fetchLive('${key}')">Fetch Live</button>
+          <button onclick="applyPaste('${key}')">Apply Pasted</button>
+          <button onclick="resetFallback('${key}')">Reset Fallback</button>
+        </div>
+      </div>`;
+    wrap.appendChild(div);
+    renderCurveTable(key);
+  });
+}
+function renderCurveTable(key){
+  const tbody = document.getElementById('tbl_'+key);
+  tbody.innerHTML = curveState[key].map(([term,rate],i)=>
+    `<tr><td>${term}</td><td><input type="number" step="0.001" value="${rate}" onchange="const v=parseFloat(this.value); if(!isNaN(v)) curveState['${key}'][${i}][1]=v; else this.value=curveState['${key}'][${i}][1];"></td></tr>`
+  ).join('');
+}
+function setBadge(key, text, cls){
+  const b = document.getElementById('badge_'+key);
+  b.textContent = text; b.className = 'badge '+cls;
+}
+function resetFallback(key){
+  curveState[key] = FALLBACK[key].slice();
+  renderCurveTable(key);
+  setBadge(key,'FALLBACK','fallback');
+}
+function applyPaste(key){
+  const raw = document.getElementById('paste_'+key).value.trim();
+  if(!raw) return;
+  const rows = raw.split('\n').map(l=>l.split(/\t|,/).map(s=>s.trim())).filter(r=>r.length>=2 && r[1]!=='')
+    .map(r=>[r[0], parseFloat(r[1])]).filter(r=>!isNaN(r[1]));
+  if(rows.length===0){ showError('Could not parse pasted rows — expected "Term<TAB>Rate" per line.'); return; }
+  curveState[key]=rows;
+  renderCurveTable(key); setBadge(key,'MANUAL','manual');
+}
+function showError(msg){
+  const box = document.getElementById('errorBox');
+  box.style.display='block'; box.textContent = msg;
+  setTimeout(()=>{box.style.display='none';}, 8000);
+}
+async function fetchLive(key){
+  const base = document.getElementById('proxyUrl').value.trim().replace(/\/$/,'');
+  if(!base){ showError('Enter your deployed proxy base URL first.'); return; }
+  const route = key==='sofr' ? '/sofr' : (key==='inr_irs' ? '/inr_irs' : '/mod_mifor');
+  try{
+    const res = await fetch(base+route);
+    const data = await res.json();
+    if(!data.ok){ showError((CURVE_META[key].label)+': '+(data.error||'fetch failed')); return; }
+    const rows = data.rates.map(r=>[r.tenor, r.rate]);
+    curveState[key]=rows;
+    renderCurveTable(key);
+    if(key==='sofr'){ setBadge(key,'3-DAY LAGGED','lag'); }
+    else { setBadge(key,'LIVE','live'); }
+  }catch(e){
+    showError((CURVE_META[key].label)+' fetch error: '+e.message+' — check proxy URL/CORS, or paste rates manually.');
+  }
+}
+async function fetchAllLive(){
+  if(!curvesBuilt){ renderPanels(); curvesBuilt = true; }
+  for(const key of Object.keys(CURVE_META)) await fetchLive(key);
+}
+
+/* =========================================================================
+   RUN PRICER
+   ========================================================================= */
+function freqMonths(label){
+  return {Monthly:1, Quarterly:3, 'Semi-Annual':6}[label] || 6;
+}
+function parseNotional(raw){
+  // strips commas/spaces/₹ so both "5,00,00,00,000" (Indian) and
+  // "5000000000" (plain) parse to the same number.
+  const cleaned = String(raw).replace(/[^\d.]/g,'');
+  return cleaned === '' ? NaN : parseFloat(cleaned);
+}
+function reformatNotional(){
+  const el = document.getElementById('notional');
+  const n = parseNotional(el.value);
+  if(!isNaN(n)) el.value = new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(n);
+}
+function fmtINR(x){ return new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(x); }
+function fmtUSD(x){ return new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(x); }
+
+document.getElementById('amortType').addEventListener('change', updateDerived);
+document.getElementById('intFreq').addEventListener('change', updateDerived);
+function updateDerived(){
+  const amortType = document.getElementById('amortType').value;
+  const intFreq = freqMonths(document.getElementById('intFreq').value);
+  const princFreq = amortType==='Bullet' ? 0 : freqMonths(amortType);
+  document.getElementById('princFreqDisp').textContent = princFreq;
+  document.getElementById('intFreqDisp').textContent = intFreq;
+}
+
+function runPricer(){
+  try{
+    const notional = parseNotional(document.getElementById('notional').value);
+    const start = new Date(document.getElementById('startDate').value);
+    const maturity = new Date(document.getElementById('maturityDate').value);
+    const spot = parseFloat(document.getElementById('spot').value);
+    const swapType = document.getElementById('swapType').value;
+    const amortType = document.getElementById('amortType').value;
+    const intFreqMonths = freqMonths(document.getElementById('intFreq').value);
+    const princFreqMonths = amortType==='Bullet' ? intFreqMonths : freqMonths(amortType);
+    const usdSpreadBps = parseFloat(document.getElementById('usdSpread').value);
+    const moratoriumMonths = parseFloat(document.getElementById('moratorium').value)||0;
+    const calibBps = parseFloat(document.getElementById('calib').value)||0;
+
+    updateDerived();
+    reformatNotional();
+
+    // guard rails: catch the inputs that actually produce NaN/Infinity downstream,
+    // instead of letting a bad field silently propagate into every output.
+    if(isNaN(notional)){ showError('Notional did not parse — check the Notional (INR) field.'); return; }
+    if(isNaN(spot) || spot<=0){ showError('USDINR Spot must be a positive number.'); return; }
+    if(isNaN(usdSpreadBps)){ showError('USD Leg Spread (bps) did not parse.'); return; }
+    if(isNaN(start) || isNaN(maturity)){ showError('Enter valid start and maturity dates.'); return; }
+    if(maturity <= start){ showError('Maturity Date must be after Start Date.'); return; }
+
+    const sofrRaw = toRaw(curveState.sofr, CURVE_META.sofr.tenorBasis);
+    const inrRaw  = toRaw(curveState.inr_irs, CURVE_META.inr_irs.tenorBasis);
+    const miforRaw= toRaw(curveState.mod_mifor, CURVE_META.mod_mifor.tenorBasis);
+
+    const sofrNodes = bootstrap(sofrRaw, CURVE_META.sofr.tau, CURVE_META.sofr.step);
+    const inrNodes  = bootstrap(inrRaw, CURVE_META.inr_irs.tau, CURVE_META.inr_irs.step);
+    const miforNodes= bootstrap(miforRaw, CURVE_META.mod_mifor.tau, CURVE_META.mod_mifor.step);
+
+    // pinpoint which curve is actually bad instead of letting NaN leak into every output
+    for(const [label, nodes] of [['SOFR IRS',sofrNodes],['INR IRS',inrNodes],['MOD MIFOR',miforNodes]]){
+      const bad = nodes.find(n=>isNaN(n.DF) || !isFinite(n.DF));
+      if(bad){
+        showError(`${label} curve has an invalid rate at T=${bad.T.toFixed(2)}y — open "Show Curves" below, check that curve's rate cells for a blank/non-numeric entry, or click Reset Fallback.`);
+        return;
+      }
+    }
+
+    const res = runEngine({notional,start,maturity,spot,swapType,amortType,intFreqMonths,
+      princFreqMonths,usdSpreadBps,moratoriumMonths,sofrNodes,inrNodes,miforNodes});
+
+    const rawBps = res.breakevenBps;
+    const finalBps = rawBps + calibBps;
+    const isFixed = swapType==='floatfixed';
+
+    document.getElementById('spreadLabel').textContent =
+      isFixed ? 'Breakeven Fixed Rate (bps, ×100 = rate %)' : 'Breakeven INR Spread (bps) [= fixed rate×100 if Float/Fixed]';
+    document.getElementById('outSpread').textContent = finalBps.toFixed(1);
+    document.getElementById('outRate').textContent = (finalBps/100).toFixed(4);
+    document.getElementById('outPV01').textContent = fmtINR(Math.round(res.annuity/10000));
+    document.getElementById('outPV01L').textContent = (res.annuity/10000/100000).toFixed(2);
+    document.getElementById('outUsdNotl').textContent = fmtINR(Math.round(notional/spot));
+    document.getElementById('outPvUsd').textContent = fmtINR(Math.round(res.pvUsdLegINR));
+    document.getElementById('outNpv').textContent = res.npvCheck.toFixed(4);
+
+    document.getElementById('cfSection').style.display='block';
+    const head = `<tr><th>#</th><th>Start</th><th>End</th><th>Days</th><th>USD Notl</th><th>Fwd SOFR</th>
+      <th>USD Int</th><th>USD CF</th><th>INR Notl</th><th>Fwd INR-IRS</th><th>INR Int (full)</th>
+      <th>Princ (INR)</th><th>INR CF (full)</th><th>DF MIFOR</th></tr>`;
+    const body = res.rows.map((r,i)=>`<tr>
+      <td>${i+1}</td><td>${r.pStart.toISOString().slice(0,10)}</td><td>${r.pEnd.toISOString().slice(0,10)}</td>
+      <td>${r.D}</td><td>${fmtUSD(r.usdNotional)}</td><td>${(r.fwdSofr*100).toFixed(3)}%</td>
+      <td>${fmtUSD(r.usdInterest)}</td><td>${fmtUSD(r.usdCF)}</td><td>${fmtINR(r.vThis)}</td>
+      <td>${(r.fwdInr*100).toFixed(3)}%</td><td>${fmtINR(r.inrInterestFull)}</td>
+      <td>${fmtINR(r.W)}</td><td>${fmtINR(r.inrCFFull)}</td><td>${r.dfMifor2.toFixed(5)}</td>
+    </tr>`).join('');
+    document.getElementById('cfWrap').innerHTML = `<table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+
+  }catch(e){
+    showError('Pricer error: '+e.message);
+    console.error(e);
+  }
+}
+
+/* ---------------------------- init ---------------------------- */
+document.getElementById('startDate').value = new Date().toISOString().slice(0,10);
+const m5 = new Date(); m5.setFullYear(m5.getFullYear()+5);
+document.getElementById('maturityDate').value = m5.toISOString().slice(0,10);
+document.getElementById('proxyUrl').value = DEFAULT_PROXY_URL;
+updateDerived();
+</script>
+</body>
+</html>
