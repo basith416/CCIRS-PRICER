@@ -138,7 +138,8 @@ tbody td:first-child{text-align:left;}
     <div class="field"><label>PRINCIPAL AMORTISATION</label>
       <select id="amortType"><option>Bullet</option><option>Monthly</option><option>Quarterly</option><option>Semi-Annual</option></select></div>
     <div class="field"><label>INTEREST PAYMENT FREQUENCY</label>
-      <select id="intFreq"><option>Monthly</option><option>Quarterly</option><option selected>Semi-Annual</option></select></div>
+      <select id="intFreq"><option>Bullet</option><option>Monthly</option><option>Quarterly</option><option selected>Semi-Annual</option></select>
+      <span id="intBulletNote" style="display:none;color:var(--text3);font-size:10px;font-family:var(--mono);margin-top:3px;">Single interest period for the whole tenor — principal amortisation frequency is ignored since there are no interim period-ends.</span></div>
     <div class="field" id="usdSpreadField"><label>USD LEG SPREAD (bps)</label><input type="number" id="usdSpread" value="100" step="1"></div>
     <div class="field" id="usdFixedField" style="display:none;"><label>USD FIXED RATE (%)</label><input type="number" id="usdFixedRate" value="4.50" step="0.01"></div>
     <div class="field"><label>MORATORIUM (MONTHS)</label><input type="number" id="moratorium" value="0" step="1"></div>
@@ -302,8 +303,12 @@ function runEngine(inputs){
   const isUsdFixed = (swapType==='fixedfloat' || swapType==='fixedfixed');
   const isInrFixed = (swapType==='floatfixed' || swapType==='fixedfixed');
   const isBullet = amortType==='Bullet';
+  const isIntBullet = (intFreqMonths === null); // single interest period for the whole tenor
  
   const periods = [];
+  if(isIntBullet){
+    periods.push({pStart: new Date(start.getTime()), pEnd: new Date(maturity.getTime()), isPrincipalDate: true});
+  } else {
   let cursor = new Date(start.getTime());
   let pnum = 0;
   while(cursor < maturity){
@@ -322,6 +327,7 @@ function runEngine(inputs){
     periods.push({pStart, pEnd, isPrincipalDate});
     cursor = pEnd;
     if(pnum>240) break;
+  }
   }
   const totalPrincipalDates = periods.filter(p=>p.isPrincipalDate).length || 1;
  
@@ -560,6 +566,9 @@ function updateSwapTypeFields(){
   document.getElementById('usdSpreadField').style.display = isUsdFixed ? 'none' : 'block';
   document.getElementById('usdFixedField').style.display = isUsdFixed ? 'block' : 'none';
 }
+document.getElementById('intFreq').addEventListener('change', function(){
+  document.getElementById('intBulletNote').style.display = (this.value==='Bullet') ? 'block' : 'none';
+});
 function freqMonths(label){ return {Monthly:1, Quarterly:3, 'Semi-Annual':6}[label] || 6; }
 function fmtINR(x){ return new Intl.NumberFormat('en-IN',{maximumFractionDigits:0}).format(x); }
 function fmtUSD(x){ return new Intl.NumberFormat('en-US',{maximumFractionDigits:0}).format(x); }
@@ -586,8 +595,9 @@ function runPricer(){
     const spot = parseFloat(document.getElementById('spot').value);
     const swapType = document.getElementById('swapType').value;
     const amortType = document.getElementById('amortType').value;
-    const intFreqMonths = freqMonths(document.getElementById('intFreq').value);
-    const princFreqMonths = amortType==='Bullet' ? intFreqMonths : freqMonths(amortType);
+    const intFreqRaw = document.getElementById('intFreq').value;
+    const intFreqMonths = intFreqRaw==='Bullet' ? null : freqMonths(intFreqRaw);
+    const princFreqMonths = amortType==='Bullet' ? (intFreqMonths||6) : freqMonths(amortType);
     const usdSpreadBps = parseFloat(document.getElementById('usdSpread').value);
     const usdFixedRatePct = parseFloat(document.getElementById('usdFixedRate').value);
     const moratoriumMonths = parseFloat(document.getElementById('moratorium').value)||0;
@@ -670,4 +680,3 @@ autoFetchAllCurves();
 </script>
 </body>
 </html>
- 
