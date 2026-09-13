@@ -141,23 +141,25 @@ def fetch_sofr_3day():
     """
     Scrapes the publicly visible '3 days ago' column from BlueGamma's USD
     swap rates page. This is NOT live — see module docstring caveat.
+    Row structure (confirmed against the actual page): tenor sits in
+    <a class="gr-tenor-link">1 Month</a>, followed by 5 <td> cells —
+    Live (a locked button, no number), 3-days-ago, 1-week-ago, 1-month-ago,
+    1-year-ago. We want the second cell (3-days-ago).
     """
     req = urllib.request.Request(
         BLUEGAMMA_URL, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, timeout=15) as r:
         html = r.read().decode('utf-8', errors='ignore')
  
-    # crude row scrape: tenor label link text, then first % figure after it
-    # (the '3 days ago' column is the first data column on the public page).
     row_re = re.compile(
-        r'(\d+)\s*(Month|Year)[^%]*?\|\s*Unlock[^|]*\|\s*([\d.]+)%',
-        re.IGNORECASE)
-    tenor_map = {'Month': 'M', 'Year': 'Y'}
+        r'class="gr-tenor-link">(\d+)\s*(Month|Year)</a>.*?<td[^>]*>.*?</td>\s*<td[^>]*>([\d.]+)%</td>',
+        re.DOTALL)
+    unit_map = {'Month': 'M', 'Year': 'Y'}
     rows = []
     for m in row_re.finditer(html):
         num, unit, rate = m.groups()
         rows.append({
-            'tenor': f'{num}{tenor_map[unit]}',
+            'tenor': f'{num}{unit_map[unit]}',
             'rate': float(rate),
             'source': '3-DAY LAGGED (BlueGamma public snapshot)',
         })
