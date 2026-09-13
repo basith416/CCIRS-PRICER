@@ -3,7 +3,7 @@ CCIRS Proxy Server
 ==================
 Extends the existing ccil_proxy.py pattern (from the INR IRS Pricer) to serve
 all three curves the CCIRS pricer needs, from a single Render/Railway deploy:
- 
+
   GET /inr_irs    -> CCIL MIBOR OIS live table   (used as the "INR IRS" curve)
   GET /mod_mifor  -> CCIL MODIFIED MIFOR live table
   GET /sofr       -> BlueGamma public "3 days ago" USD SOFR swap snapshot
@@ -11,7 +11,7 @@ all three curves the CCIRS pricer needs, from a single Render/Railway deploy:
   GET /raw_ccil   -> DEBUG: full raw CCIL JSON, unmodified, so you can see the
                      exact key name CCIL uses for the Modified MIFOR array and
                      lock it into MODMIFOR_KEYS below if the guess is wrong.
- 
+
 WHY THIS SHAPE
 --------------
 CCIL's "Interbank INR Interest Rate Swaps – Real Time Market Watch" page
@@ -20,14 +20,14 @@ live tables off the SAME Liferay portlet call: MIBOR OIS, Intentional Spread
 Trades, and MODIFIED MIFOR. Your existing IRS Pricer proxy already fetches
 this portlet and parses `resultMiborOis`. This script reuses that exact call
 and additionally parses whichever key holds the Modified MIFOR rows.
- 
+
 I could not confirm the live JSON key name for the Modified MIFOR array from
 here (the page needs a POST with session cookies to return data, which isn't
 reachable from a sandboxed fetch). MODMIFOR_KEYS below lists the most likely
 candidates in order and the code will use the first one that's present. If
 none match, hit /raw_ccil once after deploying, find the correct key from the
 printed top-level keys, and add it to MODMIFOR_KEYS[0].
- 
+
 BLUEGAMMA CAVEAT
 ----------------
 BlueGamma's live SOFR swap rates are paywalled ("Unlock ->" on the public
@@ -41,25 +41,25 @@ production. If you get a BlueGamma API key later, replace fetch_sofr() with
 a call to https://api.bluegamma.io/v1/swap_rate and this becomes a genuine
 LIVE tier instead of a 3-day-lagged one.
 """
- 
+
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 import urllib.request
 import json
 import re
 import os
- 
+
 CCIL_URL = (
     'https://www.ccilindia.com/interbank-inr-interest-rate-swaps'
     '?p_p_id=CcilRealTimeMarketWatchMainPageAjax_CcilRealTimeMarketWatchMainPageAjaxPortlet_INSTANCE_qown'
     '&p_p_lifecycle=2&p_p_state=normal&p_p_mode=view'
     '&p_p_resource_id=mainReport&p_p_cacheability=cacheLevelPage'
 )
- 
+
 BLUEGAMMA_URL = 'https://www.bluegamma.io/usd-swap-rates'
- 
+
 TENORS = ['1M', '2M', '3M', '6M', '9M', '1Y', '2Y', '3Y', '4Y', '5Y', '7Y', '10Y']
- 
+
 # Ordered guesses for the Modified MIFOR array's JSON key — first hit wins.
 # Confirm/replace via /raw_ccil after first deploy.
 MODMIFOR_KEYS = [
@@ -67,8 +67,8 @@ MODMIFOR_KEYS = [
     'resultMIFOR', 'resultMifor', 'resultMMFOR',
 ]
 OIS_KEYS = ['resultMiborOis']
- 
- 
+
+
 def _fetch_ccil_raw():
     req = urllib.request.Request(
         CCIL_URL, method="POST",
@@ -80,10 +80,13 @@ def _fetch_ccil_raw():
     with urllib.request.urlopen(req, timeout=15) as r:
         data = json.loads(r.read())
     return data
- 
- 
+
+
 def _extract_rate_rows(raw_array):
-    """Same row-shape used by the existing IRS pricer proxy."""
+    """Same row-shape used by the existing IRS pricer proxy, plus: skip any
+    tenor where CCIL genuinely has no usable number today (both the live
+    weighted-average and the previous-close are null/zero) — returning a
+    fake 0% rate for an untraded tenor would badly distort the curve."""
     rows = []
     for r in raw_array:
         tenor = r.get('ismy_trad_mrty')
@@ -91,17 +94,20 @@ def _extract_rate_rows(raw_array):
             continue
         warr = float(r.get('ismy_drvt_warr') or 0)
         prev = float(r.get('ismy_prev_lrrt') or r.get('ismy_drvt_prcls') or 0)
+        rate = warr if warr > 0 else prev
+        if rate <= 0:
+            continue  # no data for this tenor today — leave it out, don't fabricate 0%
         rows.append({
             'tenor': tenor,
-            'rate': warr if warr > 0 else prev,
+            'rate': rate,
             'prev_close': prev if prev > 0 else None,
             'volume': float(r.get('ismy_drvt_ttrvl') or r.get('ismy_drvt_volm') or 0),
             'trades': int(r.get('ismy_drvt_notrd') or r.get('ismy_trad_cntt') or 0),
             'source': 'LIVE' if warr > 0 else 'PREV_CLOSE',
         })
     return rows
- 
- 
+
+
 def fetch_ccil_curve(candidate_keys):
     data = _fetch_ccil_raw()
     for key in candidate_keys:
@@ -114,8 +120,8 @@ def fetch_ccil_curve(candidate_keys):
                 return {'ok': True, 'rates': rows, 'key_used': key}
     return {'ok': False, 'error': f'none of {candidate_keys} found/populated',
             'available_keys': list(data.keys())}
- 
- 
+
+
 def fetch_sofr_3day():
     """
     Scrapes the publicly visible '3 days ago' column from BlueGamma's USD
@@ -125,7 +131,7 @@ def fetch_sofr_3day():
         BLUEGAMMA_URL, headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, timeout=15) as r:
         html = r.read().decode('utf-8', errors='ignore')
- 
+
     # crude row scrape: tenor label link text, then first % figure after it
     # (the '3 days ago' column is the first data column on the public page).
     row_re = re.compile(
@@ -143,22 +149,22 @@ def fetch_sofr_3day():
     if not rows:
         return {'ok': False, 'error': 'no rows parsed — BlueGamma page layout may have changed'}
     return {'ok': True, 'rates': rows, 'as_of': 'T-3 business days (public snapshot only)'}
- 
- 
+
+
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.handle_request()
- 
+
     def do_OPTIONS(self):
         self.send_response(200)
         self._cors()
         self.end_headers()
- 
+
     def _cors(self):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
- 
+
     def handle_request(self):
         path = urlparse(self.path).path
         try:
@@ -188,13 +194,12 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
         self.wfile.write(payload)
- 
+
     def log_message(self, *a):
         pass
- 
- 
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     print('CCIRS proxy running on port', port)
     HTTPServer(("", port), Handler).serve_forever()
- 
