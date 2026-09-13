@@ -57,6 +57,7 @@ CCIL_URL = (
 )
  
 BLUEGAMMA_URL = 'https://www.bluegamma.io/usd-swap-rates'
+FX_SPOT_URL = 'https://query1.finance.yahoo.com/v8/finance/chart/INR=X'  # Yahoo Finance, free, no key, intraday (~15min delayed)
  
 TENORS = ['1M', '2M', '3M', '6M', '9M', '1Y', '2Y', '3Y', '4Y', '5Y', '7Y', '10Y']
  
@@ -137,6 +138,29 @@ def fetch_sofr_raw_html():
     return {'ok': True, 'total_length': len(html), 'snippet': snippet}
  
  
+def fetch_usdinr_spot():
+    """
+    USD/INR from Yahoo Finance's quote endpoint — free, no key, and genuinely
+    intraday (Yahoo's standard ~15 minute delay on FX pairs, refreshed
+    continuously through the trading day). This is an unofficial/undocumented
+    endpoint (same one the `yfinance` library uses under the hood) — stable
+    in practice for years, but if it ever breaks, hit /raw_spot to see the
+    raw response and re-diagnose, same pattern as /raw_ccil and /raw_sofr.
+    """
+    req = urllib.request.Request(FX_SPOT_URL, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read())
+    try:
+        meta = data['chart']['result'][0]['meta']
+        rate = meta['regularMarketPrice']
+        as_of = meta.get('regularMarketTime')
+    except (KeyError, IndexError, TypeError):
+        return {'ok': False, 'error': 'unexpected response shape from Yahoo Finance'}
+    if not rate:
+        return {'ok': False, 'error': 'no price in response'}
+    return {'ok': True, 'rate': rate, 'as_of_unix': as_of}
+ 
+ 
 def fetch_sofr_3day():
     """
     Scrapes the publicly visible '3 days ago' column from BlueGamma's USD
@@ -191,6 +215,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = fetch_ccil_curve(MODMIFOR_KEYS)
             elif path == '/sofr':
                 body = fetch_sofr_3day()
+            elif path == '/usdinr_spot':
+                body = fetch_usdinr_spot()
+            elif path == '/raw_spot':
+                req = urllib.request.Request(FX_SPOT_URL, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    body = json.loads(r.read())
             elif path == '/raw_ccil':
                 body = _fetch_ccil_raw()
             elif path == '/raw_sofr':
@@ -200,10 +230,11 @@ class Handler(BaseHTTPRequestHandler):
                     'inr_irs': fetch_ccil_curve(OIS_KEYS),
                     'mod_mifor': fetch_ccil_curve(MODMIFOR_KEYS),
                     'sofr': fetch_sofr_3day(),
+                    'usdinr_spot': fetch_usdinr_spot(),
                 }
             else:
                 body = {'ok': False, 'error': 'unknown route',
-                        'routes': ['/inr_irs', '/mod_mifor', '/sofr', '/all', '/raw_ccil', '/raw_sofr']}
+                        'routes': ['/inr_irs', '/mod_mifor', '/sofr', '/usdinr_spot', '/all', '/raw_ccil', '/raw_sofr', '/raw_spot']}
             payload = json.dumps(body, default=str).encode()
             self.send_response(200)
         except Exception as e:
@@ -222,4 +253,3 @@ if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     print('CCIRS proxy running on port', port)
     HTTPServer(("", port), Handler).serve_forever()
- 
