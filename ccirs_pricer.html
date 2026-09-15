@@ -75,7 +75,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14
 .spread-decomp{font-family:var(--mono);font-size:13px;color:var(--text2);line-height:1.8;}
 .spread-decomp .hi{color:var(--text);}
  
-.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;}
+.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:16px;}
 @media(max-width:420px){.metrics{grid-template-columns:repeat(2,1fr);}}
 .metric-card{background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px;}
 .metric-name{font-size:10px;color:var(--text3);font-family:var(--mono);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px;}
@@ -158,9 +158,7 @@ tbody td:first-child{text-align:left;}
   <div class="metric-card"><div class="metric-name">Equivalent Rate</div><div class="metric-val" id="mRate">—</div></div>
   <div class="metric-card"><div class="metric-name">PV01 (₹ Lakhs)</div><div class="metric-val" id="mPv01">—</div></div>
   <div class="metric-card"><div class="metric-name">USD Notional Equiv.</div><div class="metric-val" id="mUsdNotl">—</div></div>
-  <div class="metric-card"><div class="metric-name">PV USD Leg (INR)</div><div class="metric-val" id="mPvUsd">—</div></div>
   <div class="metric-card"><div class="metric-name">INR PV01 (₹/bp)</div><div class="metric-val" id="mPv01Raw">—</div></div>
-  <div class="metric-card"><div class="metric-name">NPV Check</div><div class="metric-val" id="mNpv">—</div></div>
 </div>
  
 <div class="card" id="cfCard">
@@ -646,9 +644,7 @@ function runPricer(){
     document.getElementById('mRate').textContent = (finalBps/100).toFixed(4)+'%';
     document.getElementById('mPv01').textContent = (res.annuity/10000/100000).toFixed(2);
     document.getElementById('mUsdNotl').textContent = '$'+fmtUSD(notional/spot);
-    document.getElementById('mPvUsd').textContent = '₹'+fmtINR(res.pvUsdLegINR);
     document.getElementById('mPv01Raw').textContent = '₹'+fmtINR(Math.round(res.annuity/10000));
-    document.getElementById('mNpv').textContent = res.npvCheck.toFixed(4);
     document.getElementById('metricsRow').style.display = 'grid';
  
     const head = `<tr><th>#</th><th>Start</th><th>End</th><th>Days</th><th>USD Notl</th><th>Fwd SOFR</th>
