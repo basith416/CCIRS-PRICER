@@ -210,11 +210,9 @@ tbody tr.princ td{color:var(--text);}
 </div>
  
 <div class="form-section">
-  <div class="section-label"><span>Bank Margin over Mid (bps)</span><span style="text-transform:none;letter-spacing:.2px;">added to the final solved price only</span></div>
+  <div class="section-label"><span>Spread over Mid</span><span style="text-transform:none;letter-spacing:.2px;">added to the final solved price only</span></div>
   <div class="form-grid three">
-    <div class="field"><label>TENOR ≤ 3Y</label><input type="number" id="m1" value="5" step="0.5"></div>
-    <div class="field"><label>3Y &lt; TENOR ≤ 5Y</label><input type="number" id="m2" value="6" step="0.5"></div>
-    <div class="field"><label>TENOR &gt; 5Y</label><input type="number" id="m3" value="8" step="0.5"></div>
+    <div class="field"><label>SPREAD, ALL TENORS (bps)</label><input type="number" id="flatAdj" value="5" step="0.5"></div>
   </div>
 </div>
  
@@ -235,7 +233,7 @@ tbody tr.princ td{color:var(--text);}
 <div class="metrics" id="metricsRow" style="display:none;">
   <div class="metric-card"><div class="metric-name">Tenor</div><div class="metric-val" id="mTenor">—</div></div>
   <div class="metric-card"><div class="metric-name">PV01 (₹/bp)</div><div class="metric-val" id="mPv01">—</div></div>
-  <div class="metric-card"><div class="metric-name">Margin PV (₹ Lakhs)</div><div class="metric-val" id="mMarginPv">—</div></div>
+  <div class="metric-card"><div class="metric-name">Spread PV (₹ Lakhs)</div><div class="metric-val" id="mMarginPv">—</div></div>
   <div class="metric-card"><div class="metric-name">INR Notional</div><div class="metric-val" id="mInrNotl">—</div></div>
   <div class="metric-card"><div class="metric-name">USD Notional</div><div class="metric-val" id="mUsdNotl">—</div></div>
   <div class="metric-card"><div class="metric-name">Principal Schedule</div><div class="metric-val" id="mPrinc" style="font-size:12px;">—</div></div>
@@ -723,16 +721,6 @@ function showError(msg){
 }
 function d10(d){ return d.toISOString().slice(0,10); }
  
-/* ---------------------------- margin grid ---------------------------- */
-function marginFor(tenorY){
-  const m1 = parseFloat(document.getElementById('m1').value),
-        m2 = parseFloat(document.getElementById('m2').value),
-        m3 = parseFloat(document.getElementById('m3').value);
-  const tol = 0.01; // ~4 days, so a 3Y/5Y trade spanning a leap day stays in its bucket
-  if(tenorY <= 3+tol) return {bps:m1, label:'≤ 3Y'};
-  if(tenorY <= 5+tol) return {bps:m2, label:'3–5Y'};
-  return {bps:m3, label:'> 5Y'};
-}
  
 /* =========================================================================
    RUN PRICER
@@ -776,8 +764,7 @@ function runPricer(){
     }
  
     const tenorY = daysBetween(start, maturity)/365.25;
-    const mg = marginFor(tenorY);
-    if(isNaN(mg.bps)){ showError('Bank margin grid has a blank value.'); return; }
+    const totalAdd = parseFloat(document.getElementById('flatAdj').value) || 0;
  
     const notional = nCcy==='USD' ? nRaw*spot : nRaw; // engine runs on INR notional
  
@@ -792,8 +779,8 @@ function runPricer(){
     const res = runEngine({direction, notional, start, maturity, spot, usdFloat, inrFloat, knownAddOn,
       intFreqMonths, amortType, princFreqMonths, moratoriumMonths, sofrNodes, inrNodes, miforNodes});
  
-    // ── Margin applied ONLY to the final solved price, against the client ──
-    const clientX = res.midX + mg.bps/10000;
+    // ── Flat spread added ONLY to the final solved price ──
+    const clientX = res.midX + totalAdd/10000;
     fillCashflows(res.rows, direction, usdFloat, inrFloat, knownAddOn, clientX);
  
     // Solved leg description
@@ -814,8 +801,8 @@ function runPricer(){
       ? Math.abs(clientX*10000).toFixed(1)+'<span>bps</span>'
       : (clientX*100).toFixed(4)+'<span>%</span>';
     document.getElementById('bMid').textContent = fmtSolved(res.midX);
-    document.getElementById('bMarginLbl').textContent = `Margin (${mg.label})`;
-    document.getElementById('bMargin').textContent = `+${mg.bps} bps`;
+    document.getElementById('bMarginLbl').textContent = 'Spread';
+    document.getElementById('bMargin').textContent = `+${totalAdd} bps`;
     document.getElementById('bClient').textContent = fmtSolved(clientX);
     document.getElementById('spreadDecomp').innerHTML =
       `<span class="hi">Client receives:</span> ${knownDesc} (${direction==='usdinr'?'USD':'INR'}) &nbsp;|&nbsp; `+
@@ -826,9 +813,9 @@ function runPricer(){
  
     // Metrics
     const princRows = res.rows.filter(r=>r.W>0.5);
-    document.getElementById('mTenor').textContent = `${tenorY.toFixed(2)}Y · ${mg.label}`;
+    document.getElementById('mTenor').textContent = `${tenorY.toFixed(2)}Y`;
     document.getElementById('mPv01').textContent = '₹'+fmtINR(Math.round(res.pv01INR));
-    document.getElementById('mMarginPv').textContent = (mg.bps*res.pv01INR/100000).toFixed(2);
+    document.getElementById('mMarginPv').textContent = (totalAdd*res.pv01INR/100000).toFixed(2);
     document.getElementById('mInrNotl').textContent = '₹'+fmtINR(notional);
     document.getElementById('mUsdNotl').textContent = '$'+fmtUSD(notional/spot);
     document.getElementById('mPrinc').textContent = princRows.length===1
